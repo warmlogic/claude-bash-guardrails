@@ -1,0 +1,9 @@
+{
+  "name": "bash-guardrails",
+  "description": "Safety guardrails for Claude Code's Bash tool — blocks compound commands, enforces safe patterns, auto-approves known-safe operations",
+  "version": "0.1.0",
+  "author": {
+    "name": "Matt Mollison",
+    "email": "matt.mollison@gmail.com"
+  }
+}

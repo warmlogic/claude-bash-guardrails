@@ -1,0 +1,16 @@
+{
+  "description": "PreToolUse hook for Bash commands — validates safety, blocks dangerous patterns, auto-approves known-safe operations",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/bash-guardrails.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
