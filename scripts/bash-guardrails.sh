@@ -61,6 +61,27 @@ is_safe_for_compound() {
   esac
 }
 
+# Check if a command matches any permissions.askForPermission Bash rule.
+# Returns 0 (true) if the command would trigger a permission prompt.
+matches_ask_permission() {
+  local c="$1"
+  local _candidates=("$HOME/.claude/settings.json" "$HOME/.claude/settings.local.json")
+  if [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then
+    _candidates+=("$CLAUDE_PROJECT_DIR/.claude/settings.json" "$CLAUDE_PROJECT_DIR/.claude/settings.local.json")
+  fi
+  for _sf in "${_candidates[@]}"; do
+    [ -f "$_sf" ] || continue
+    while IFS= read -r _rule; do
+      [ -z "$_rule" ] && continue
+      _pat=$(printf '%s' "$_rule" | sed -e 's/[.+?^${}()|[\]\\]/\\&/g' -e 's/\*/.*/g')
+      if echo "$c" | grep -Eq "^${_pat}$"; then
+        return 0
+      fi
+    done < <(jq -r '.permissions.askForPermission[]? // empty | select(startswith("Bash(")) | sub("^Bash\\("; "") | sub("\\)$"; "")' "$_sf" 2>/dev/null)
+  done
+  return 1
+}
+
 # Split a quote-stripped command on compound operators (||, &&, ;, |)
 # into one sub-command per line. || before | to avoid partial matching.
 split_on_operators() {
@@ -189,7 +210,17 @@ if echo "$stripped_no_fallback" | grep -Eq '(\s&&\s|\s\|\|\s|;\s*\S)'; then
   done < <(split_on_operators "$stripped")
 
   if [ "$compound_safe" = true ]; then
-    emit_allow "Compound command: all sub-commands are read-only"
+    # Don't auto-allow if any sub-command matches askForPermission rules.
+    ask_match=false
+    while IFS= read -r subcmd; do
+      trimmed=$(echo "$subcmd" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+      [ -z "$trimmed" ] && continue
+      if matches_ask_permission "$trimmed"; then
+        ask_match=true; break
+      fi
+    done < <(split_on_operators "$stripped")
+    [ "$ask_match" = false ] && emit_allow "Compound command: all sub-commands are read-only"
+    # Fall through — let Claude Code's native permission system handle it.
   else
     # List the unsafe sub-commands in the block message.
     echo "BLOCKED: Compound command — split into separate Bash tool calls:" >&2
@@ -211,7 +242,10 @@ fi
 # the command is a single command in a different directory.
 if [ "$cd_prefix_stripped" = true ]; then
   remaining=$(echo "$stripped_no_cd" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-  [ -n "$remaining" ] && emit_allow "cd + single command: cd prefix is safe, individual command passes all checks"
+  if [ -n "$remaining" ] && ! matches_ask_permission "$remaining"; then
+    emit_allow "cd + single command: cd prefix is safe, individual command passes all checks"
+  fi
+  # If remaining matches askForPermission, fall through to native permission system.
 fi
 
 #@check 10  hint    Pipes from cat/grep/find/ls → hint to use Read/Grep/Glob tools
