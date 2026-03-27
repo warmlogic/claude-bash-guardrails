@@ -193,6 +193,48 @@ _test_allow '<<< single-quoted string' "cmd <<< 'hello world'" true
 _test_allow '<<< unquoted variable not approved' 'cmd <<< $SOME_VAR' false
 
 echo ""
+echo "--- cd prefix must not bypass askForPermission (section 9b) ---"
+# Create a temp HOME with askForPermission rules for these tests.
+_afp_home=$(mktemp -d)
+mkdir -p "$_afp_home/.claude"
+cat > "$_afp_home/.claude/settings.json" << 'AFP_SETTINGS'
+{
+  "permissions": {
+    "askForPermission": [
+      "Bash(git push *)",
+      "Bash(git push)"
+    ]
+  }
+}
+AFP_SETTINGS
+
+_test_afp() {
+  local label="$1" cmd="$2" expect_allow="$3"
+  result=$(jq -n --arg c "$cmd" '{"tool_input":{"command":$c}}' | HOME="$_afp_home" bash "$HOOK" 2>/dev/null)
+  if [ "$expect_allow" = true ]; then
+    if echo "$result" | grep -q '"permissionDecision"'; then
+      pass=$((pass+1)); echo "  ok: $label"
+    else
+      echo "  FAIL: $label (expected allow decision, got none)"; echo "        $result"; fail=$((fail+1))
+    fi
+  else
+    if echo "$result" | grep -q '"permissionDecision"'; then
+      echo "  FAIL: $label (unexpected allow decision)"; echo "        $result"; fail=$((fail+1))
+    else
+      pass=$((pass+1)); echo "  ok: $label"
+    fi
+  fi
+}
+
+_test_afp "cd && git push: no auto-allow"        "cd /tmp && git push"             false
+_test_afp "cd && git push origin: no auto-allow"  "cd /tmp && git push origin main" false
+_test_afp "cd && git status: still auto-allows"   "cd /tmp && git status"           true
+_test_afp "cd && ls: still auto-allows"           "cd /tmp && ls -la"               true
+_test_afp "bare git push: no auto-allow"          "git push"                        false
+
+rm -rf "$_afp_home"
+
+echo ""
 echo "--- Allowlist auto-approve (section 12) ---"
 run_test_allowlist "git log is allowlisted" "git log --oneline" true
 run_test_allowlist "npm install is allowlisted" "npm install express" true
