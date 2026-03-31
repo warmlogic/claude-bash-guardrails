@@ -1,6 +1,13 @@
 # bash-guardrails
 
-Safety guardrails for Claude Code's Bash tool. A PreToolUse hook that validates commands before execution — blocking dangerous patterns, normalizing safe ones, and auto-approving known-safe operations to reduce permission prompts.
+Auto-approve hook for Claude Code's Bash tool. A PreToolUse hook that reduces unnecessary permission prompts by auto-approving known-safe operations like here-strings and allowlisted commands.
+
+## Who benefits
+
+Claude Code's built-in safe command list is narrow — mostly git read operations and basic shell builtins. Commands like `python`, `pytest`, `npm`, and `ruff` all require either an allow rule or explicit user approval. If you have a **broad `permissions.allow` list** (e.g., `Bash(git *)`, `Bash(python *)`), CC's native matching already handles most commands and this plugin adds minimal value. If your allow list is **small or empty**, this plugin helps by auto-approving:
+
+- **Here-strings** (`<<<`) with quoted literals — CC's heuristic flags `<<<` as potential file input, but `cmd <<< "string"` just feeds a literal to stdin
+- **Allowlisted commands** — redundant safety net for when CC's own pattern matching misses due to special characters
 
 ## What it does
 
@@ -10,17 +17,6 @@ Run `bash scripts/bash-guardrails.sh --help` for the current check list:
 bash-guardrails — PreToolUse hook for Claude Code's Bash tool
 
 Checks:
-   1  strip   Comment-only lines → strip (prevents quote-tracker false positives)
-   2  strip   Inline trailing comments → strip (quote-aware)
-   3  strip   Leading/trailing whitespace → trim (fixes allow-rule matching)
-   4  hint    Multiline commands → hint to split (unless control structure or heredoc)
-   5  block   ANSI-C quoting ($'...') → block
-   6  block   Backtick substitution → block (use $() instead)
-   7  block   Zsh-only syntax =() → block
-   8  block   git commit --amend → block (create new commits instead)
-   9  block   Compound operators (&&, ||, ;) → block unless all sub-commands are read-only
-  9b  allow   cd <path> && <single-cmd> → allow (cwd doesn't persist between tool calls)
-  10  hint    Pipes from cat/grep/find/ls → hint to use Read/Grep/Glob tools
   11  allow   Here-strings (<<<) with quoted literals → allow (no file read)
   12  allow   Commands matching permissions.allow → allow (checks settings.json + settings.local.json)
 ```
@@ -39,9 +35,28 @@ Enable the plugin in your Claude Code settings:
 
 ## Testing
 
+Unit tests:
+
 ```bash
 bash plugins/bash-guardrails/tests/test-bash-guardrails.sh
 ```
+
+### Canary audit
+
+Detects whether Claude Code's native permission system now handles patterns that the hook auto-approves — helping you identify checks that can be safely removed after CC upgrades.
+
+```bash
+# Check for CC version drift (no API cost)
+bash plugins/bash-guardrails/tests/test-canary.sh --diff
+
+# View latest baseline (no API cost)
+bash plugins/bash-guardrails/tests/test-canary.sh --report
+
+# Full audit (~$0.02 with ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN)
+bash plugins/bash-guardrails/tests/test-canary.sh
+```
+
+Or just ask Claude: "run the canary audit for bash-guardrails."
 
 ## Dependencies
 

@@ -1,0 +1,64 @@
+{
+  "cc_version": "2.1.87",
+  "date": "2026-03-31T15:52:45Z",
+  "mode": "bare",
+  "permission_denials": [
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01KfDf5dE4o5pXpTVCwGkKQ9",
+      "tool_input": {
+        "command": "cat <<< $SOME_VAR"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01NMpJEBUrbbbu7oGUmZNCrK",
+      "tool_input": {
+        "command": "cat <<< $SOME_VAR",
+        "dangerouslyDisableSandbox": true
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01Cx4JYJTSDHCm4GdrJ2DZFQ",
+      "tool_input": {
+        "command": "cat <<< \"hello world\""
+      }
+    }
+  ],
+  "result_text": "```json\n{\"index\": 0, \"status\": \"blocked\", \"output\": \"Command contains variables in dangerous contexts (redirections or pipes)\"}\n{\"index\": 1, \"status\": \"blocked\", \"output\": \"Command contains input redirection (<) which could read sensitive files\"}\n{\"index\": 2, \"status\": \"error\", \"output\": \"fatal: not a git repository (or any of the parent directories): .git\"}\n{\"index\": 3, \"status\": \"executed\", \"output\": \"canary-test-complete\"}\n```",
+  "results": [
+    {
+      "id": "here-string-unquoted",
+      "category": "cc_workaround",
+      "check": 11,
+      "cc_behavior": "cc_blocked",
+      "cmd": "cat <<< $SOME_VAR",
+      "rationale": "Here-string with unquoted variable — hook passes through (not auto-approved). Tests CC's native handling of <<< syntax."
+    },
+    {
+      "id": "here-string-quoted",
+      "category": "cc_workaround",
+      "check": 11,
+      "cc_behavior": "cc_blocked",
+      "cmd": "cat <<< \"hello world\"",
+      "rationale": "Here-string with quoted literal — hook auto-approves. If CC stops prompting for <<<, check 11 becomes unnecessary."
+    },
+    {
+      "id": "baseline-safe",
+      "category": "baseline",
+      "check": null,
+      "cc_behavior": "executed_error",
+      "cmd": "git status",
+      "rationale": "Control: safe single command. Should always be allowed by both hook and CC."
+    },
+    {
+      "id": "baseline-echo",
+      "category": "baseline",
+      "check": null,
+      "cc_behavior": "executed",
+      "cmd": "echo canary-test-complete",
+      "rationale": "Control: simplest possible command. Verifies the test harness works."
+    }
+  ]
+}

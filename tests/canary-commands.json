@@ -1,0 +1,37 @@
+{
+  "description": "Sentinel commands for detecting changes in Claude Code's native permission behavior. Each entry maps to a specific bash-guardrails check that might become redundant as CC evolves.",
+  "sentinels": [
+    {
+      "id": "here-string-unquoted",
+      "check": 11,
+      "category": "cc_workaround",
+      "cmd": "cat <<< $SOME_VAR",
+      "hook_verdict": "pass",
+      "rationale": "Here-string with unquoted variable — hook passes through (not auto-approved). Tests CC's native handling of <<< syntax."
+    },
+    {
+      "id": "here-string-quoted",
+      "check": 11,
+      "category": "cc_workaround",
+      "cmd": "cat <<< \"hello world\"",
+      "hook_verdict": "allow",
+      "rationale": "Here-string with quoted literal — hook auto-approves. If CC stops prompting for <<<, check 11 becomes unnecessary."
+    },
+    {
+      "id": "baseline-safe",
+      "check": null,
+      "category": "baseline",
+      "cmd": "git status",
+      "hook_verdict": "pass",
+      "rationale": "Control: safe single command. Should always be allowed by both hook and CC."
+    },
+    {
+      "id": "baseline-echo",
+      "check": null,
+      "category": "baseline",
+      "cmd": "echo canary-test-complete",
+      "hook_verdict": "pass",
+      "rationale": "Control: simplest possible command. Verifies the test harness works."
+    }
+  ]
+}
