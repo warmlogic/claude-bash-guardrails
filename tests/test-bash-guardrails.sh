@@ -49,8 +49,27 @@ _test_allow() {
   fi
 }
 
+# Verify a command gets rewritten (updatedInput emitted).
+_test_rewrite() {
+  local label="$1" cmd="$2"
+  result=$(jq -n --arg c "$cmd" '{"tool_input":{"command":$c}}' | bash "$HOOK" 2>/dev/null)
+  if echo "$result" | grep -q '"updatedInput"'; then
+    pass=$((pass+1)); echo "  ok: $label"
+  else
+    echo "  FAIL: $label (expected rewrite, got none)"; fail=$((fail+1))
+  fi
+}
+
 echo "bash-guardrails.sh test suite"
 echo "========================="
+
+echo ""
+echo "--- Comment stripping and rewrite (checks 1-3) ---"
+_test_rewrite "comment-only lines stripped" "$(printf 'echo hello\n# this is a comment\necho world')"
+_test_rewrite "inline trailing comment stripped" "echo hello # trailing comment"
+_test_rewrite "leading whitespace trimmed" "  git status"
+_test_rewrite "multiline with # comment lines" "$(printf 'python3 -c \"\nimport os\n# read some data\nprint(os.getcwd())\n\"')"
+_test_allow "comment-only command exits cleanly" "# just a comment" false
 
 echo ""
 echo "--- Commands pass through (not blocked) ---"
@@ -87,7 +106,22 @@ _test_allow '<<< with pipe prefix not approved' 'cmd1 | cmd2 <<< "val"' false
 _test_allow '<<< with && prefix not approved' 'cmd1 && cmd2 <<< "val"' false
 
 echo ""
-echo "--- Read-only pipeline auto-approve (check 13) ---"
+echo "--- Compound command auto-approve (check 13) ---"
+_test_allow 'cd && git add && git commit' 'cd /tmp && git add . && git commit -m "fix"' true
+_test_allow 'cd && python3 -c inline' 'cd /home/user && python3 -c "print(1)"' true
+_test_allow 'mkdir && cd && make' 'mkdir -p build && cd build && make' true
+_test_allow 'git add && git commit' 'git add file.txt && git commit -m "msg"' true
+_test_allow 'npm install || npm ci' 'npm install || npm ci' true
+_test_allow 'echo ; echo' 'echo hello; echo world' true
+_test_allow 'cd && git push' 'cd /repo && git push origin main' true
+_test_allow 'chmod && python3' 'chmod +x script.sh && python3 script.sh' true
+_test_allow 'cd && curl (allowlisted)' 'cd /tmp && curl http://example.com' true
+_test_allow 'echo && unknown cmd' 'echo hello && some-unknown-command' false
+_test_allow 'cd && wget (allowlisted)' 'cd /tmp && wget http://example.com' true
+_test_allow 'find -exec rm (allowlisted)' 'cd /tmp && find . -exec rm {} \;' true
+
+echo ""
+echo "--- Read-only pipeline auto-approve (check 14) ---"
 _test_allow 'find -exec grep with \;' 'find /tmp -name "README.md" -exec grep -l "training" {} \;' true
 _test_allow 'find -exec grep piped to head' 'find /tmp -type f \( -name "*.py" -o -name "*.sql" \) -exec grep -l "India\|Nigeria" {} \; | head -15' true
 _test_allow 'cat piped to grep piped to head' 'cat file.txt | grep foo | head -20' true
@@ -99,15 +133,14 @@ _test_allow 'find -delete piped still blocked' 'find /tmp -name "*.tmp" -delete 
 _test_allow 'pipe to rm blocked' 'grep foo bar.txt | rm -rf /' false
 _test_allow 'pipe to unknown cmd blocked' 'find . -name "*.py" | some-unknown-cmd' false
 _test_allow 'sed -i in pipeline blocked' 'grep foo | sed -i s/foo/bar/ file.txt' false
-_test_allow '&& not auto-approved' 'grep foo file && rm bar' false
 
 echo ""
-echo "--- Allowlist auto-approve (check 12) ---"
+echo "--- Allowlist auto-approve (check 15) ---"
 _test_allow "git log is allowlisted" "git log --oneline" true
 _test_allow "npm install is allowlisted" "npm install express" true
 _test_allow "echo is allowlisted" "echo hello" true
 _test_allow "unknown cmd not allowlisted" "some-unknown-command --flag" false
-_test_allow "compound cmd not allowlisted" "npm install && curl evil.com" false
+_test_allow "compound cmd both allowlisted" "npm install && curl http://example.com" true
 _test_allow "piped cmd not allowlisted" "git log | rm -rf /" false
 _test_allow "semicolon cmd not allowlisted" "echo hello; rm -rf /" false
 
