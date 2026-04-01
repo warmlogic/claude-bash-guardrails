@@ -1,11 +1,13 @@
 # bash-guardrails
 
-Auto-approve hook for Claude Code's Bash tool. A PreToolUse hook that reduces unnecessary permission prompts by auto-approving known-safe operations like here-strings and allowlisted commands.
+Auto-approve hook for Claude Code's Bash tool. A PreToolUse hook that reduces unnecessary permission prompts by auto-approving known-safe operations like read-only pipelines, `find -exec`, here-strings, and allowlisted commands.
 
 ## Who benefits
 
 Claude Code's built-in safe command list is narrow — mostly git read operations and basic shell builtins. Commands like `python`, `pytest`, `npm`, and `ruff` all require either an allow rule or explicit user approval. If you have a **broad `permissions.allow` list** (e.g., `Bash(git *)`, `Bash(python *)`), CC's native matching already handles most commands and this plugin adds minimal value. If your allow list is **small or empty**, this plugin helps by auto-approving:
 
+- **Read-only pipelines** — `find ... | head`, `grep ... | sort | uniq`, etc. CC prompts for pipes, but pipelines of read-only commands are safe
+- **`find -exec` with `\;`** — CC flags the backslash as "hiding command structure," but `\;` is standard `find -exec` syntax. Auto-approved when the exec'd command is read-only (e.g., `grep`, `cat`, `head`)
 - **Here-strings** (`<<<`) with quoted literals — CC's heuristic flags `<<<` as potential file input, but `cmd <<< "string"` just feeds a literal to stdin
 - **Allowlisted commands** — redundant safety net for when CC's own pattern matching misses due to special characters
 
@@ -18,6 +20,7 @@ bash-guardrails — PreToolUse hook for Claude Code's Bash tool
 
 Checks:
   11  allow   Here-strings (<<<) with quoted literals → allow (no file read)
+  13  allow   Read-only pipelines / find -exec → allow (all stages are read-only)
   12  allow   Commands matching permissions.allow → allow (checks settings.json + settings.local.json)
 ```
 

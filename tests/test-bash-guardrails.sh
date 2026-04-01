@@ -87,6 +87,21 @@ _test_allow '<<< with pipe prefix not approved' 'cmd1 | cmd2 <<< "val"' false
 _test_allow '<<< with && prefix not approved' 'cmd1 && cmd2 <<< "val"' false
 
 echo ""
+echo "--- Read-only pipeline auto-approve (check 13) ---"
+_test_allow 'find -exec grep with \;' 'find /tmp -name "README.md" -exec grep -l "training" {} \;' true
+_test_allow 'find -exec grep piped to head' 'find /tmp -type f \( -name "*.py" -o -name "*.sql" \) -exec grep -l "India\|Nigeria" {} \; | head -15' true
+_test_allow 'cat piped to grep piped to head' 'cat file.txt | grep foo | head -20' true
+_test_allow 'grep piped to sort piped to uniq' 'grep -r TODO . | sort | uniq' true
+_test_allow 'git log piped to head' 'git log --oneline | head -10' true
+_test_allow 'find -exec rm blocked' 'find /tmp -exec rm {} \;' false
+_test_allow 'find -exec sh blocked' 'find /tmp -exec sh -c "evil" {} \;' false
+_test_allow 'find -delete piped still blocked' 'find /tmp -name "*.tmp" -delete | head' false
+_test_allow 'pipe to rm blocked' 'grep foo bar.txt | rm -rf /' false
+_test_allow 'pipe to unknown cmd blocked' 'find . -name "*.py" | some-unknown-cmd' false
+_test_allow 'sed -i in pipeline blocked' 'grep foo | sed -i s/foo/bar/ file.txt' false
+_test_allow '&& not auto-approved' 'grep foo file && rm bar' false
+
+echo ""
 echo "--- Allowlist auto-approve (check 12) ---"
 _test_allow "git log is allowlisted" "git log --oneline" true
 _test_allow "npm install is allowlisted" "npm install express" true

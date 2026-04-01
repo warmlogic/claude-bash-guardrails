@@ -1,7 +1,7 @@
 {
   "name": "bash-guardrails",
-  "description": "Auto-approve hook for Claude Code's Bash tool — reduces unnecessary permission prompts for here-strings and allowlisted commands",
-  "version": "0.2.0",
+  "description": "Auto-approve hook for Claude Code's Bash tool — reduces unnecessary permission prompts for read-only pipelines, find -exec, here-strings, and allowlisted commands",
+  "version": "0.3.0",
   "author": {
     "name": "Matt Mollison",
     "email": "matt.mollison@gmail.com"
