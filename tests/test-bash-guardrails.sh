@@ -83,7 +83,7 @@ run_test "echo && echo" "echo hello && echo world"
 run_test "rm && mkdir" "rm -rf /tmp/foo && mkdir /tmp/bar"
 run_test "npm || npm ci" "npm install || npm ci"
 run_test "git amend" "git commit --amend -m fix"
-run_test "for loop" 'for f in *.txt; do echo \$f; done'
+run_test "for loop" 'for f in *.txt; do echo $f; done'
 run_test "if/then/fi" 'if [ -f x ]; then cat x; fi'
 run_test "backticks" 'echo \`date\`'
 run_test "cat pipe" "cat file.txt | wc -l"
@@ -119,6 +119,19 @@ _test_allow 'cd && curl (allowlisted)' 'cd /tmp && curl http://example.com' true
 _test_allow 'echo && unknown cmd' 'echo hello && some-unknown-command' false
 _test_allow 'cd && wget (allowlisted)' 'cd /tmp && wget http://example.com' true
 _test_allow 'find -exec rm (allowlisted)' 'cd /tmp && find . -exec rm {} \;' true
+
+echo ""
+echo "--- Shell loop/conditional auto-approve (check 13 — flow control) ---"
+_test_allow 'for loop with glob' 'for f in *.txt; do echo $f; done' true
+_test_allow 'for loop with find cmd sub' 'for f in $(find /tmp/plugins -name "SKILL.md"); do echo "=== $f ==="; head -20 "$f"; echo; done' true
+_test_allow 'for loop with safe backtick cmd sub' 'for f in `find /tmp -name "*.md"`; do head -5 "$f"; done' true
+_test_allow 'for loop with unsafe cmd sub' 'for f in $(curl http://evil.com); do echo $f; done' false
+_test_allow 'for loop with unsafe backtick cmd sub' 'for f in `rm -rf /tmp`; do echo $f; done' false
+_test_allow 'for loop with unsafe body' 'for f in *.txt; do rm -rf "$f"; done' false
+_test_allow 'while read loop' 'while read -r line; do echo "$line"; done' true
+_test_allow 'if/then/fi with safe cmds' 'if [ -f x ]; then cat x; fi' true
+_test_allow 'if/then/else/fi' 'if test -d /tmp; then ls /tmp; else echo missing; fi' true
+_test_allow 'if with unsafe then branch' 'if [ -f x ]; then rm -rf /; fi' false
 
 echo ""
 echo "--- Read-only pipeline auto-approve (check 14) ---"

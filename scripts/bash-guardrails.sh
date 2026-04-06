@@ -138,10 +138,12 @@ if echo "$cmd" | grep -q '<<<'; then
   fi
 fi
 
-#@check 13  allow   Compound commands (&&, ||, ;) → allow if all sub-commands are safe
+#@check 13  allow   Compound commands (&&, ||, ;) and shell loops/conditionals → allow if all sub-commands are safe
 # --- 13. Auto-approve safe compound commands ---
 # CC blocks compound operators to prevent chaining attacks, but common
 # patterns like "cd <path> && git commit" are safe.
+# Also handles shell control flow (for/while/until/if/case) — extracts
+# inner commands and command substitutions, verifies each is safe.
 # Splits on compound operators, verifies every sub-command is known-safe.
 
 # Is a command safe for compounding?
@@ -153,7 +155,42 @@ is_safe_for_compound() {
   first=$(echo "$c" | awk '{print $1}')
   [ -z "$first" ] && return 1
   case "$first" in
-    cd|echo|printf|true|:|test|pwd|whoami|which|type) return 0 ;;
+    cd|echo|printf|true|:|test|\[|pwd|whoami|which|type|read) return 0 ;;
+    # Shell control-flow keywords
+    done|fi|esac) return 0 ;;  # closing keywords — no-ops
+    do|then|else|elif)
+      # Keyword followed by a command — strip keyword, check the command
+      local rest
+      rest=$(echo "$c" | sed "s/^${first}[[:space:]]*//" )
+      [ -z "$rest" ] && return 0
+      is_safe_for_compound "$rest"
+      return $? ;;
+    for|select)
+      # for VAR in EXPR — check command substitutions in EXPR
+      local expr
+      expr=$(echo "$c" | sed -n 's/^[a-z]*[[:space:]]*[^[:space:]]*[[:space:]]*in[[:space:]]*//p')
+      if echo "$expr" | grep -q '\$('; then
+        local inner
+        while IFS= read -r inner; do
+          [ -z "$inner" ] && continue
+          is_safe_for_compound "$inner" || return 1
+        done < <(echo "$expr" | grep -oE '\$\([^)]+\)' | sed -e 's/^\$(//' -e 's/)$//')
+      fi
+      if echo "$expr" | grep -q '`'; then
+        local inner_bt
+        while IFS= read -r inner_bt; do
+          [ -z "$inner_bt" ] && continue
+          is_safe_for_compound "$inner_bt" || return 1
+        done < <(echo "$expr" | grep -oE '`[^`]+`' | sed -e 's/^`//' -e 's/`$//')
+      fi
+      return 0 ;;
+    while|until|if)
+      # Check the condition command
+      local cond
+      cond=$(echo "$c" | sed "s/^${first}[[:space:]]*//" )
+      [ -z "$cond" ] && return 0
+      is_safe_for_compound "$cond"
+      return $? ;;
     cat|head|tail|less|more|wc|file|stat|du|df|tree|ls) return 0 ;;
     grep|egrep|fgrep|rg|ag) return 0 ;;
     find)

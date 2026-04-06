@@ -1,0 +1,178 @@
+{
+  "cc_version": "2.1.92",
+  "date": "2026-04-06T16:10:31Z",
+  "mode": "bare",
+  "permission_denials": [
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_014nCVzBDM5PhTBvb5x9SWj8",
+      "tool_input": {
+        "command": "cat <<< $SOME_VAR",
+        "description": "Command 0: cat with undefined variable"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01CgkBcjamd66RpodMMQgCLs",
+      "tool_input": {
+        "command": "cd /tmp && git status",
+        "description": "Command 2: cd to /tmp and git status"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01MwPWAK9ftpZnHEgjkkbVwn",
+      "tool_input": {
+        "command": "for f in *.txt; do echo $f; done",
+        "description": "Command 4: for loop with txt files"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01B4ghVSiZbCgLFSUst81Muz",
+      "tool_input": {
+        "command": "for f in $(find /tmp -name \"*.md\"); do head -5 \"$f\"; done",
+        "description": "Command 5: find and head markdown files"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01ARY5HN9gCgA1Ay76LseLpN",
+      "tool_input": {
+        "command": "while read -r line; do echo \"$line\"; done < /dev/null",
+        "description": "Command 6: while read from /dev/null"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_017y6W1g8DcZxY45kpCEMs2D",
+      "tool_input": {
+        "command": "if [ -f /tmp ]; then echo exists; fi",
+        "description": "Command 7: if statement test"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01NUQJH5wBLXsCNVSWQiGhsg",
+      "tool_input": {
+        "command": "cat /dev/null | grep foo | head -5",
+        "description": "Command 8: pipe cat grep and head"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01JrAapfzod4mYA37sZLN8SL",
+      "tool_input": {
+        "command": "find /tmp -name \"*.md\" -exec grep -l \"test\" {} \\;",
+        "description": "Command 9: find with exec grep"
+      }
+    }
+  ],
+  "result_text": "```json\n{\"index\": 0, \"status\": \"blocked\", \"output\": \"Contains simple_expansion\"}\n{\"index\": 1, \"status\": \"executed\", \"output\": \"hello world\"}\n{\"index\": 2, \"status\": \"blocked\", \"output\": \"Compound commands with cd and git require approval\"}\n{\"index\": 3, \"status\": \"executed\", \"output\": \"hello\"}\n{\"index\": 4, \"status\": \"blocked\", \"output\": \"Contains simple_expansion\"}\n{\"index\": 5, \"status\": \"error\", \"output\": \"Unhandled node type: string\"}\n{\"index\": 6, \"status\": \"blocked\", \"output\": \"Contains while_statement\"}\n{\"index\": 7, \"status\": \"blocked\", \"output\": \"This Bash command contains multiple operations\"}\n{\"index\": 8, \"status\": \"blocked\", \"output\": \"This Bash command contains multiple operations\"}\n{\"index\": 9, \"status\": \"blocked\", \"output\": \"find in '/private/tmp' was blocked\"}\n{\"index\": 10, \"status\": \"executed\", \"output\": \"11.11.0\"}\n{\"index\": 11, \"status\": \"error\", \"output\": \"Exit code 128 fatal: not a git repository\"}\n{\"index\": 12, \"status\": \"executed\", \"output\": \"canary-test-complete\"}\n```",
+  "results": [
+    {
+      "id": "here-string-unquoted",
+      "category": "cc_workaround",
+      "check": 11,
+      "cc_behavior": "cc_blocked",
+      "cmd": "cat <<< $SOME_VAR",
+      "rationale": "Here-string with unquoted variable — hook passes through (not auto-approved). Tests CC's native handling of <<< syntax."
+    },
+    {
+      "id": "here-string-quoted",
+      "category": "cc_workaround",
+      "check": 11,
+      "cc_behavior": "executed",
+      "cmd": "cat <<< \"hello world\"",
+      "rationale": "Here-string with quoted literal — hook auto-approves. If CC stops prompting for <<<, check 11 becomes unnecessary."
+    },
+    {
+      "id": "compound-cd-and-git",
+      "category": "cc_workaround",
+      "check": 13,
+      "cc_behavior": "cc_blocked",
+      "cmd": "cd /tmp && git status",
+      "rationale": "Compound command with &&. CC blocks compound operators to prevent chaining attacks, but cd+git is safe. If CC stops prompting for &&, check 13 compound logic becomes unnecessary."
+    },
+    {
+      "id": "compound-semicolons",
+      "category": "cc_workaround",
+      "check": 13,
+      "cc_behavior": "executed",
+      "cmd": "echo hello; echo world",
+      "rationale": "Semicolon-separated safe commands. If CC stops prompting for ;, check 13 semicolon handling becomes unnecessary."
+    },
+    {
+      "id": "for-loop-glob",
+      "category": "cc_workaround",
+      "check": 13,
+      "cc_behavior": "cc_blocked",
+      "cmd": "for f in *.txt; do echo $f; done",
+      "rationale": "Simple for loop with glob iterator. CC flags the ; in loop syntax. If CC learns to parse shell loops natively, the flow-control handling in check 13 becomes unnecessary."
+    },
+    {
+      "id": "for-loop-find-cmdsub",
+      "category": "cc_workaround",
+      "check": 13,
+      "cc_behavior": "cc_blocked",
+      "cmd": "for f in $(find /tmp -name \"*.md\"); do head -5 \"$f\"; done",
+      "rationale": "For loop with $(find ...) command substitution — the exact pattern that triggered the bug report. Tests CC's handling of loops + command substitution + semicolons together."
+    },
+    {
+      "id": "while-read-loop",
+      "category": "cc_workaround",
+      "check": 13,
+      "cc_behavior": "cc_blocked",
+      "cmd": "while read -r line; do echo \"$line\"; done < /dev/null",
+      "rationale": "While-read loop pattern. Very common shell idiom. If CC handles while loops natively, the flow-control handling becomes unnecessary."
+    },
+    {
+      "id": "if-then-fi",
+      "category": "cc_workaround",
+      "check": 13,
+      "cc_behavior": "cc_blocked",
+      "cmd": "if [ -f /tmp ]; then echo exists; fi",
+      "rationale": "If/then/fi conditional. CC flags ; in the syntax. If CC parses conditionals natively, check 13 flow-control handling becomes unnecessary."
+    },
+    {
+      "id": "pipeline-readonly",
+      "category": "cc_workaround",
+      "check": 14,
+      "cc_behavior": "cc_blocked",
+      "cmd": "cat /dev/null | grep foo | head -5",
+      "rationale": "Read-only pipeline. CC blocks pipes to prevent command chaining. If CC learns to classify all-readonly pipelines, check 14 becomes unnecessary."
+    },
+    {
+      "id": "find-exec-grep",
+      "category": "cc_workaround",
+      "check": 14,
+      "cc_behavior": "cc_blocked",
+      "cmd": "find /tmp -name \"*.md\" -exec grep -l \"test\" {} \\;",
+      "rationale": "find -exec with readonly command and \\;. CC flags the backslash. If CC handles find -exec \\; natively, the find-exec path in check 14 becomes unnecessary."
+    },
+    {
+      "id": "allowlist-npm",
+      "category": "cc_workaround",
+      "check": 15,
+      "cc_behavior": "executed",
+      "cmd": "npm --version",
+      "rationale": "Command matching a typical permissions.allow rule. If CC's built-in allowlist expands to cover common dev tools, check 15 becomes less necessary."
+    },
+    {
+      "id": "baseline-safe",
+      "category": "baseline",
+      "check": null,
+      "cc_behavior": "executed_error",
+      "cmd": "git status",
+      "rationale": "Control: safe single command. Should always be allowed by both hook and CC."
+    },
+    {
+      "id": "baseline-echo",
+      "category": "baseline",
+      "check": null,
+      "cc_behavior": "executed",
+      "cmd": "echo canary-test-complete",
+      "rationale": "Control: simplest possible command. Verifies the test harness works."
+    }
+  ]
+}

@@ -18,6 +18,78 @@
       "rationale": "Here-string with quoted literal — hook auto-approves. If CC stops prompting for <<<, check 11 becomes unnecessary."
     },
     {
+      "id": "compound-cd-and-git",
+      "check": 13,
+      "category": "cc_workaround",
+      "cmd": "cd /tmp && git status",
+      "hook_verdict": "allow",
+      "rationale": "Compound command with &&. CC blocks compound operators to prevent chaining attacks, but cd+git is safe. If CC stops prompting for &&, check 13 compound logic becomes unnecessary."
+    },
+    {
+      "id": "compound-semicolons",
+      "check": 13,
+      "category": "cc_workaround",
+      "cmd": "echo hello; echo world",
+      "hook_verdict": "allow",
+      "rationale": "Semicolon-separated safe commands. If CC stops prompting for ;, check 13 semicolon handling becomes unnecessary."
+    },
+    {
+      "id": "for-loop-glob",
+      "check": 13,
+      "category": "cc_workaround",
+      "cmd": "for f in *.txt; do echo $f; done",
+      "hook_verdict": "allow",
+      "rationale": "Simple for loop with glob iterator. CC flags the ; in loop syntax. If CC learns to parse shell loops natively, the flow-control handling in check 13 becomes unnecessary."
+    },
+    {
+      "id": "for-loop-find-cmdsub",
+      "check": 13,
+      "category": "cc_workaround",
+      "cmd": "for f in $(find /tmp -name \"*.md\"); do head -5 \"$f\"; done",
+      "hook_verdict": "allow",
+      "rationale": "For loop with $(find ...) command substitution — the exact pattern that triggered the bug report. Tests CC's handling of loops + command substitution + semicolons together."
+    },
+    {
+      "id": "while-read-loop",
+      "check": 13,
+      "category": "cc_workaround",
+      "cmd": "while read -r line; do echo \"$line\"; done < /dev/null",
+      "hook_verdict": "allow",
+      "rationale": "While-read loop pattern. Very common shell idiom. If CC handles while loops natively, the flow-control handling becomes unnecessary."
+    },
+    {
+      "id": "if-then-fi",
+      "check": 13,
+      "category": "cc_workaround",
+      "cmd": "if [ -f /tmp ]; then echo exists; fi",
+      "hook_verdict": "allow",
+      "rationale": "If/then/fi conditional. CC flags ; in the syntax. If CC parses conditionals natively, check 13 flow-control handling becomes unnecessary."
+    },
+    {
+      "id": "pipeline-readonly",
+      "check": 14,
+      "category": "cc_workaround",
+      "cmd": "cat /dev/null | grep foo | head -5",
+      "hook_verdict": "allow",
+      "rationale": "Read-only pipeline. CC blocks pipes to prevent command chaining. If CC learns to classify all-readonly pipelines, check 14 becomes unnecessary."
+    },
+    {
+      "id": "find-exec-grep",
+      "check": 14,
+      "category": "cc_workaround",
+      "cmd": "find /tmp -name \"*.md\" -exec grep -l \"test\" {} \\;",
+      "hook_verdict": "allow",
+      "rationale": "find -exec with readonly command and \\;. CC flags the backslash. If CC handles find -exec \\; natively, the find-exec path in check 14 becomes unnecessary."
+    },
+    {
+      "id": "allowlist-npm",
+      "check": 15,
+      "category": "cc_workaround",
+      "cmd": "npm --version",
+      "hook_verdict": "allow",
+      "rationale": "Command matching a typical permissions.allow rule. If CC's built-in allowlist expands to cover common dev tools, check 15 becomes less necessary."
+    },
+    {
       "id": "baseline-safe",
       "check": null,
       "category": "baseline",
