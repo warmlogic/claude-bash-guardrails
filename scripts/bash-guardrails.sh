@@ -192,6 +192,7 @@ is_safe_for_compound() {
       is_safe_for_compound "$cond"
       return $? ;;
     cat|head|tail|less|more|wc|file|stat|du|df|tree|ls) return 0 ;;
+    basename|dirname|realpath|readlink) return 0 ;;
     grep|egrep|fgrep|rg|ag) return 0 ;;
     find)
       echo "$c" | grep -Eq '(^|[[:space:]])-delete([[:space:]]|$)' && return 1
@@ -232,6 +233,27 @@ is_safe_for_compound() {
       esac
       return 1 ;;
     *)
+      # Variable assignments: VAR=value or VAR=$(cmd)
+      if echo "$first" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*='; then
+        local val
+        val=$(echo "$c" | sed 's/^[A-Za-z_][A-Za-z0-9_]*=//')
+        # Check command substitutions within the value
+        if echo "$val" | grep -q '\$('; then
+          local inner
+          while IFS= read -r inner; do
+            [ -z "$inner" ] && continue
+            is_safe_for_compound "$inner" || return 1
+          done < <(echo "$val" | grep -oE '\$\([^)]+\)' | sed -e 's/^\$(//' -e 's/)$//')
+        fi
+        if echo "$val" | grep -q '`'; then
+          local inner_bt
+          while IFS= read -r inner_bt; do
+            [ -z "$inner_bt" ] && continue
+            is_safe_for_compound "$inner_bt" || return 1
+          done < <(echo "$val" | grep -oE '`[^`]+`' | sed -e 's/^`//' -e 's/`$//')
+        fi
+        return 0
+      fi
       # Allow --version / version checks
       echo "$c" | grep -Eq '(^|[[:space:]])--version([[:space:]]|$)' && return 0
       echo "$c" | grep -Eq '^\s*\S+\s+version([[:space:]]|$)' && return 0
@@ -297,6 +319,7 @@ is_readonly_cmd() {
   [ -z "$first" ] && return 1
   case "$first" in
     cat|head|tail|less|more|wc|file|stat|du|df|tree|ls) return 0 ;;
+    basename|dirname|realpath|readlink) return 0 ;;
     grep|egrep|fgrep|rg|ag) return 0 ;;
     find)
       # find is read-only unless -delete or -exec with a non-readonly command

