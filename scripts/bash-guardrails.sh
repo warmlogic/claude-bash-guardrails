@@ -225,13 +225,30 @@ is_safe_for_compound() {
     awk) return 0 ;;
     sed) echo "$c" | grep -Eq '(^|[[:space:]])-i' && return 1; return 0 ;;
     date|uname|hostname|id|groups|env|printenv|locale) return 0 ;;
-    mkdir) return 0 ;;
+    md5sum|sha256sum|sha512sum|shasum|b2sum) return 0 ;;
+    nproc|getconf) return 0 ;;
+    xxd|od|hexdump|strings) return 0 ;;
+    mkdir|touch) return 0 ;;
+    cp|mv|ln) return 0 ;;
+    tee) return 0 ;;
+    tar|zip|unzip|gzip|gunzip|bzip2|xz) return 0 ;;
     python|python3|node|ruby|perl)
       # Inline scripts (-c) and module runs (-m) are typical dev commands
       return 0 ;;
     pip|pip3|npm|npx|yarn|pnpm|cargo|go|make|cmake) return 0 ;;
     pytest|jest|vitest|mocha) return 0 ;;
     chmod) return 0 ;;
+    rm)
+      # Allow rm in compound commands, but block dangerous targets.
+      # Strip flags to isolate path arguments for safety checks.
+      local rm_args
+      rm_args=$(echo "$c" | sed -E 's/^rm[[:space:]]*//' | sed -E 's/(^|[[:space:]])-[a-zA-Z]+//g' | sed 's/^[[:space:]]*//')
+      # Block if no path arguments remain (bare "rm -rf" is a mistake)
+      [ -z "$rm_args" ] && return 1
+      # Block targeting root, home, parent dir, or .git
+      echo "$rm_args" | grep -Eq '(^|[[:space:]])(\/[[:space:]]*$|~([[:space:]]|\/[[:space:]]*$|$)|\.\.|\.git)' && return 1
+      return 0 ;;
+    gh) return 0 ;;
     git)
       local sub
       sub=$(echo "$c" | awk '{print $2}')
@@ -239,12 +256,14 @@ is_safe_for_compound() {
         # Read-only
         log|status|diff|show|branch|tag|rev-parse|describe) return 0 ;;
         ls-files|ls-remote|remote|shortlog|blame|reflog|count-objects) return 0 ;;
+        cat-file|name-rev|for-each-ref|merge-base|rev-list) return 0 ;;
         config) echo "$c" | grep -Eq '(^|[[:space:]])--(get|list)([[:space:]]|$)' && return 0 ;;
-        stash) echo "$c" | grep -Eq '(^|[[:space:]])list([[:space:]]|$)' && return 0 ;;
+        stash) return 0 ;;  # all stash ops (push, pop, apply, list, show, drop)
+        clone) return 0 ;;
         # Write ops — standard dev workflow, safe in compound commands
         add|commit|push|pull|fetch|checkout|switch|restore|merge|rebase|cherry-pick) return 0 ;;
         rm|mv) return 0 ;;
-        # git clean, git reset --hard, git stash drop are destructive — not auto-approved
+        # git clean, git reset --hard are destructive — not auto-approved
       esac
       return 1 ;;
     *)
@@ -328,10 +347,12 @@ if echo "$cmd_no_escapes_compound" | grep -Eq '&&|\|\||;'; then
   fi
 fi
 
-#@check 14  allow   Read-only pipelines / find -exec → allow (all stages are read-only)
-# --- 14. Auto-approve read-only pipelines ---
+#@check 14  allow   Safe pipelines / find -exec → allow (all stages are known-safe)
+# --- 14. Auto-approve safe pipelines ---
 # Handles commands that check 15 skips due to shell operators (|, \;, \(, etc).
-# Splits on pipe, verifies every stage is a known read-only command.
+# Splits on pipe, verifies every stage passes is_cmd_approved (deny → safe → allow).
+# Pipelines are more constrained than && chains (stages communicate only via
+# stdin/stdout), so using the same safety check as compound commands is sound.
 # Also covers unpipelined find -exec with \; (which CC flags for backslash).
 
 # Check if a command is read-only (cannot modify filesystem state).
@@ -362,6 +383,9 @@ is_readonly_cmd() {
     awk) return 0 ;;
     sed) echo "$c" | grep -Eq '(^|[[:space:]])-i' && return 1; return 0 ;;
     date|uname|hostname|id|groups|env|printenv|locale) return 0 ;;
+    md5sum|sha256sum|sha512sum|shasum|b2sum) return 0 ;;
+    nproc|getconf) return 0 ;;
+    xxd|od|hexdump|strings) return 0 ;;
     echo|printf|pwd|whoami|which|type|test|true) return 0 ;;
     git)
       local sub
@@ -369,6 +393,7 @@ is_readonly_cmd() {
       case "$sub" in
         log|status|diff|show|branch|tag|rev-parse|describe) return 0 ;;
         ls-files|ls-remote|remote|shortlog|blame|reflog|count-objects) return 0 ;;
+        cat-file|name-rev|for-each-ref|merge-base|rev-list) return 0 ;;
       esac
       return 1 ;;
     *) return 1 ;;
@@ -381,17 +406,17 @@ if echo "$cmd_no_quotes" | grep -Eq '[|\\]'; then
   cmd_no_escapes=$(echo "$cmd_no_quotes" | sed 's/\\[;|&<>()]//g')
   # Bail if real compound operators remain (&&, ||, ;) — too complex to auto-approve
   if ! echo "$cmd_no_escapes" | grep -Eq '&&|\|\||;'; then
-    all_readonly=true
+    all_safe=true
     while IFS= read -r segment; do
       segment=$(echo "$segment" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
       [ -z "$segment" ] && continue
-      if ! is_readonly_cmd "$segment"; then
-        all_readonly=false
+      if ! is_safe_for_compound "$segment"; then
+        all_safe=false
         break
       fi
     done < <(echo "$cmd_no_escapes" | tr '|' '\n')
-    if [ "$all_readonly" = true ]; then
-      emit_allow "Read-only pipeline: all commands are read-only"
+    if [ "$all_safe" = true ]; then
+      emit_allow "Safe pipeline: all stages are known-safe"
     fi
   fi
 fi
