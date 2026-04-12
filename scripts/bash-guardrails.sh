@@ -430,11 +430,10 @@ fi
 # Guard: skip if command contains shell operators outside quotes — glob-to-regex
 # would be too permissive for compound/piped commands. Compound operators are
 # handled by check 13 above.
-if echo "$cmd_no_quotes" | grep -Eq '&&|\|\||[|;]'; then
-  exit 0
-fi
 allowlisted=false
-if [ ${#allow_rules[@]} -gt 0 ] && matches_rule "$cmd" "${allow_rules[@]}"; then
+if echo "$cmd_no_quotes" | grep -Eq '&&|\|\||[|;]'; then
+  : # Skip allowlist matching — glob-to-regex is too permissive for compound/piped commands
+elif [ ${#allow_rules[@]} -gt 0 ] && matches_rule "$cmd" "${allow_rules[@]}"; then
   allowlisted=true
 fi
 

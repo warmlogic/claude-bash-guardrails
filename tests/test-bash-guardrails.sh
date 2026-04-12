@@ -69,6 +69,7 @@ _test_rewrite "comment-only lines stripped" "$(printf 'echo hello\n# this is a c
 _test_rewrite "inline trailing comment stripped" "echo hello # trailing comment"
 _test_rewrite "leading whitespace trimmed" "  git status"
 _test_rewrite "multiline with # comment lines" "$(printf 'python3 -c \"\nimport os\n# read some data\nprint(os.getcwd())\n\"')"
+_test_rewrite "piped cmd with # in python -c string" "$(printf 'bd list --json 2>/dev/null | python3 -c \"\nimport json, sys\n# parse data\nprint(json.load(sys.stdin))\n\"')"
 _test_allow "comment-only command exits cleanly" "# just a comment" false
 
 echo ""
