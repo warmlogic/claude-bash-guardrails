@@ -16,7 +16,54 @@ fi
 cmd=$(jq -r '.tool_input.command // ""')
 needs_rewrite=false
 
+#@check  0  deny    Heredoc inside $(...) → deny with guidance (shell parser trap)
+# --- 0. Deny heredoc-in-command-substitution ---
+# The pattern `git commit -m "$(cat <<'EOF' ... EOF)" && ...` is a common
+# LLM instinct for multi-line commit messages, but it trips two parsers:
+#   - zsh -c eval: "(eval):N: unmatched \"" when chained with &&
+#   - CC's bash tree-sitter parser: "Unhandled node type: string"
+# Both cause the command to fail or to require a permission prompt.
+# Writing the content to a temp file and using -F / --body-file is
+# strictly cleaner and works universally — so deny this pattern early
+# with a clear message that the model can act on.
+if printf '%s' "$cmd" | grep -qF '$(cat <<'; then
+  jq -n '{
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: "Heredoc inside command substitution (`$(cat <<EOF ... EOF)`) is a shell-parser trap in Claude Code — it fails zsh -c eval when chained with `&&` and trips CC bash tool parser with `Unhandled node type: string`. Write the content to a temp file with the Write tool, then pass it via a file flag: `git commit -F /tmp/msg.txt`, `gh pr create --body-file /tmp/body.txt`, etc."
+    }
+  }'
+  exit 0
+fi
+
 # --- Helpers ---
+
+# Strip quoted content ('...' and "...") across newlines.
+# sed's [^"]* can't match across newlines, so multi-line quoted strings
+# (e.g. bd create --description "line1\nline2") would leak operators
+# like ; or && into compound detection. awk with RS="\0" reads the
+# entire input as one record so character classes can match newlines.
+# Respects backslash escapes (\", \', \\).
+strip_quoted_mls() {
+  printf '%s' "$1" | awk 'BEGIN { RS="\0" } {
+    sq = 0; dq = 0
+    out = ""
+    n = length($0)
+    for (i = 1; i <= n; i++) {
+      c = substr($0, i, 1)
+      if (c == "\\" && i < n) {
+        if (sq == 0 && dq == 0) { out = out c substr($0, i+1, 1) }
+        i++
+        continue
+      }
+      if (dq == 0 && c == "\x27") { sq = 1 - sq; continue }
+      if (sq == 0 && c == "\"")  { dq = 1 - dq; continue }
+      if (sq == 0 && dq == 0) out = out c
+    }
+    printf "%s", out
+  }'
+}
 
 # Load permissions.allow and permissions.deny rules from settings files.
 # Populates bash arrays: allow_rules[] and deny_rules[].
@@ -91,19 +138,6 @@ if [ "$cmd_stripped" != "$cmd" ]; then
   fi
   cmd="$cmd_stripped"
   needs_rewrite=true
-fi
-
-#@check  2  strip   Inline trailing comments → strip (quote-aware)
-# --- 2. Strip inline trailing comments (quote-aware) ---
-# Remove "# ..." at end of line when # follows whitespace and is outside quotes.
-line="$cmd"
-no_quotes_for_comments=$(echo "$line" | sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g')
-if echo "$no_quotes_for_comments" | grep -q ' #'; then
-  pos=$(echo "$no_quotes_for_comments" | grep -bo ' #' | head -1 | cut -d: -f1)
-  if [ -n "$pos" ]; then
-    cmd="${line:0:$((pos))}"
-    needs_rewrite=true
-  fi
 fi
 
 #@check  3  strip   Leading/trailing whitespace → trim (fixes allowlist matching)
@@ -304,7 +338,7 @@ split_on_compound() {
     -e 's/[[:space:]]*;[[:space:]]*/\n/g' | sed '/^[[:space:]]*$/d'
 }
 
-cmd_no_quotes=$(echo "$cmd" | sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g')
+cmd_no_quotes=$(strip_quoted_mls "$cmd")
 
 # Strip escaped operators (\;, \|, etc.) before checking for compound operators —
 # these are arguments (e.g., find -exec {} \;), not shell syntax.

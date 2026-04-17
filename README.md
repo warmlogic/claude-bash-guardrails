@@ -20,8 +20,8 @@ Run `bash scripts/bash-guardrails.sh --help` for the current check list:
 bash-guardrails — PreToolUse hook for Claude Code's Bash tool
 
 Checks:
+   0  deny    Heredoc inside $(...) → deny (zsh/tree-sitter parser trap; suggests -F file)
    1  strip   Comment-only lines → strip (prevents CC's #-after-newline heuristic)
-   2  strip   Inline trailing comments → strip (quote-aware)
    3  strip   Leading/trailing whitespace → trim (fixes allowlist matching)
   11  allow   Here-strings (<<<) with quoted literals → allow (no file read)
   13  allow   Compound commands (&&, ||, ;) and shell loops/conditionals → allow if all sub-commands are safe
@@ -69,4 +69,15 @@ Or just ask Claude: "run the canary audit for bash-guardrails."
 ## Dependencies
 
 - `jq` (for JSON parsing — typically pre-installed with Claude Code)
+- `awk` (for multi-line quote-aware string analysis — pre-installed on macOS/Linux)
 - `bash` 4.0+ (for `<<<` here-strings and `${var:offset:length}` substring syntax)
+
+## Gotchas for contributors
+
+Writing a PreToolUse hook that parses shell strings accurately is surprisingly fiddly. A few things that bit us in the past:
+
+- **`sed` and `grep` do not cross newlines.** Character classes like `[^"]*` and patterns like `grep -v '^\s*#'` operate per-line. A multi-line quoted string (common in CC commands with `--description "line1\nline2"`) has an unterminated `"` on each line, so per-line quote stripping silently fails and lets embedded `;` / `&&` leak into compound-command analysis. Use `awk` with `RS="\0"` (or Perl) for anything that needs to respect quote state across lines. See `strip_quoted_mls` in `scripts/bash-guardrails.sh`.
+- **Position mapping after destructive transforms is a trap.** Do not compute a byte offset in a quote-stripped version of a command and then use it to truncate the original — the offsets do not line up. This bug in the old check 2 truncated `echo 'foo' # trailing` to `echo`. Either work entirely in the stripped version or make the finder quote-aware from the start.
+- **The hook can silently corrupt commands.** Any `updatedInput.command` you emit is what CC runs. A faulty rewrite does not surface as a failed test — it shows up as commands executing with dropped arguments. Prefer "allow + leave cmd alone" over "allow + rewrite" unless the rewrite is provably safe.
+- **Canary absence is a signal, not a guarantee.** Before adding a new check, add a sentinel to `tests/canary-commands.json`. Before removing a check, confirm either (a) CC blocks the sentinel natively (check is redundant and harmless) or (b) CC never blocked it in the first place (check was speculative — the case that motivated removing old check 2).
+- **Adversarial tests matter more than happy-path tests.** When a quote-stripping bug makes `echo "harmless\nmulti" && rm -rf /` invisible to the compound checker, happy-path tests still pass. Always add "dangerous compound not masked by multi-line quote" cases alongside the allow cases.

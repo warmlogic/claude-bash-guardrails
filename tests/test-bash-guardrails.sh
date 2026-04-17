@@ -49,6 +49,17 @@ _test_allow() {
   fi
 }
 
+# Verify a command gets denied with a reason (permissionDecision: deny).
+_test_deny() {
+  local label="$1" cmd="$2"
+  result=$(jq -n --arg c "$cmd" '{"tool_input":{"command":$c}}' | bash "$HOOK" 2>/dev/null)
+  if echo "$result" | grep -q '"permissionDecision": "deny"'; then
+    pass=$((pass+1)); echo "  ok: $label"
+  else
+    echo "  FAIL: $label (expected deny, got: $result)"; fail=$((fail+1))
+  fi
+}
+
 # Verify a command gets rewritten (updatedInput emitted).
 _test_rewrite() {
   local label="$1" cmd="$2"
@@ -64,9 +75,22 @@ echo "bash-guardrails.sh test suite"
 echo "========================="
 
 echo ""
+echo "--- Heredoc-in-command-substitution denial (check 0) ---"
+_test_deny "git commit with \$(cat <<EOF)" "$(printf 'git commit -m "$(cat <<EOF\nhello\nEOF\n)"')"
+_test_deny "git commit with \$(cat <<'EOF')" "$(printf 'git commit -m "$(cat <<'"'"'EOF'"'"'\nhello\nEOF\n)"')"
+_test_deny "chained \$(cat <<EOF) with &&" "$(printf 'git add foo && git commit -m "$(cat <<EOF\nbody\nEOF\n)"')"
+_test_deny "gh pr create with \$(cat <<EOF)" "$(printf 'gh pr create --body "$(cat <<EOF\nbody\nEOF\n)"')"
+_test_allow "plain cat << heredoc (no \$(...)) passes through" "$(printf 'cat > /tmp/note.md <<EOF\nbody\nEOF')" true
+_test_allow "git commit -F file passes through" "git commit -F /tmp/msg.txt" true
+_test_allow "git commit -m simple message passes" "git commit -m \"simple message\"" true
+
+echo ""
 echo "--- Comment stripping and rewrite (checks 1-3) ---"
 _test_rewrite "comment-only lines stripped" "$(printf 'echo hello\n# this is a comment\necho world')"
-_test_rewrite "inline trailing comment stripped" "echo hello # trailing comment"
+_test_allow "inline trailing comment passes through unchanged" "echo hello # trailing comment" true
+# Regression: old check 2 truncated this to "echo" (lost the quoted arg) due to
+# position-mapping bug between quote-stripped and original cmd. Check 2 removed.
+_test_allow "inline comment after quoted arg not truncated" "echo 'foo' # trailing" true
 _test_rewrite "leading whitespace trimmed" "  git status"
 _test_rewrite "multiline with # comment lines" "$(printf 'python3 -c \"\nimport os\n# read some data\nprint(os.getcwd())\n\"')"
 _test_rewrite "piped cmd with # in python -c string" "$(printf 'bd list --json 2>/dev/null | python3 -c \"\nimport json, sys\n# parse data\nprint(json.load(sys.stdin))\n\"')"
@@ -163,6 +187,16 @@ _test_allow 'variable assignment with allowlisted cmd sub' 'for f in *.txt; do d
 _test_allow 'variable assignment with non-allowlisted cmd sub' 'for f in *.txt; do data=$(some-unknown-command); echo "$data"; done' false
 _test_allow 'simple variable assignment' 'x=hello; echo $x' true
 _test_allow 'variable assignment with safe cmd sub' 'ts=$(date +%s); echo "timestamp: $ts"' true
+
+echo ""
+echo "--- Multi-line quoted strings (regression: sed's [^\"]* can't cross newlines) ---"
+_test_allow 'multi-line dq description with ; inside' "$(printf 'cd /tmp && T=$(bd create "title" --description "line one.\nhas semis; escalate; do not force." --acceptance "ok") && echo done')" true
+_test_allow 'multi-line sq description with && inside' "$(printf 'cd /tmp && T=$(bd create --description '"'"'line one\ncontains && operator\nline three'"'"') && echo done')" true
+_test_allow 'multi-line dq with embedded newline but no compound leak' "$(printf 'echo "line1\nline2" && echo done')" true
+_test_allow 'multi-line sq awk script with ;' "$(printf 'cd /tmp && awk '"'"'\nBEGIN { x=1; y=2 }\n{ print x; print y }\n'"'"' file && echo done')" true
+_test_allow 'multi-line python -c with ; inside' "$(printf 'cd /tmp && python3 -c "\nx = 1; y = 2\nprint(x); print(y)\n" && echo done')" true
+_test_allow 'dangerous compound not masked by multi-line quote' "$(printf 'echo "harmless\nmulti-line" && some-unknown-tool')" false
+_test_allow 'rm -rf not masked by multi-line quote' "$(printf 'echo "harmless\nmulti-line" && rm -rf /')" false
 
 echo ""
 echo "--- Safe pipeline auto-approve (check 14) ---"
