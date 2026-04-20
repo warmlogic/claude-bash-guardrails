@@ -1,148 +1,200 @@
 {
-  "description": "Sentinel commands for detecting changes in Claude Code's native permission behavior. Each entry maps to a specific bash-guardrails check that might become redundant as CC evolves.",
-  "sentinels": [
+  "cc_version": "2.1.114",
+  "date": "2026-04-20T18:49:44Z",
+  "mode": "bare",
+  "permission_denials": [
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01LJLf3XtTjzX4rd1dLV8aUm",
+      "tool_input": {
+        "command": "cat <<< $SOME_VAR"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01ETXFckUZCs4jFTNHpy7Wjs",
+      "tool_input": {
+        "command": "cd /tmp && git status"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01CnYEdGmuprbU3rxpVbM3fj",
+      "tool_input": {
+        "command": "for f in *.txt; do echo $f; done"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_015P5jz1HjhDyt5AZmwHZqmY",
+      "tool_input": {
+        "command": "for f in $(find /tmp -name \"*.md\"); do head -5 \"$f\"; done"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01H4uqWwftnzHkMLVtbpp3qK",
+      "tool_input": {
+        "command": "while read -r line; do echo \"$line\"; done < /dev/null"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_014zbhCzW3zG13D8XKXbPPNN",
+      "tool_input": {
+        "command": "cat /dev/null | grep foo | head -5"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_012odhDgLEowCgQ2k8GTXaNh",
+      "tool_input": {
+        "command": "find /tmp -name \"*.md\" -exec grep -l \"test\" {} \\;"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01LNWJHstJGgqQBiHmU8GLVZ",
+      "tool_input": {
+        "command": "echo $'line1\\nline2'"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01JYBueyU1JfwFkZs7W33M2y",
+      "tool_input": {
+        "command": "git commit -m \"$(cat <<EOF\nmsg\nEOF\n)\""
+      }
+    }
+  ],
+  "result_text": "```json\n{\"index\": 0, \"status\": \"error\", \"output\": \"Contains simple_expansion\"}\n{\"index\": 1, \"status\": \"executed\", \"output\": \"hello world\"}\n{\"index\": 2, \"status\": \"blocked\", \"output\": \"This command changes directory before running git, which can execute untrusted hooks from the target directory.\"}\n{\"index\": 3, \"status\": \"executed\", \"output\": \"hello\"}\n{\"index\": 4, \"status\": \"error\", \"output\": \"Contains simple_expansion\"}\n{\"index\": 5, \"status\": \"error\", \"output\": \"Unhandled node type: string\"}\n{\"index\": 6, \"status\": \"error\", \"output\": \"Contains while_statement\"}\n{\"index\": 7, \"status\": \"executed\", \"output\": \"(Bash completed with no output)\"}\n{\"index\": 8, \"status\": \"blocked\", \"output\": \"This Bash command contains multiple operations.\"}\n{\"index\": 9, \"status\": \"blocked\", \"output\": \"find with '-exec' executes commands or modifies files — cannot be auto-allowed by a Bash(find:*) prefix rule\"}\n{\"index\": 10, \"status\": \"executed\", \"output\": \"11.11.0\"}\n{\"index\": 11, \"status\": \"executed\", \"output\": \"hello\"}\n{\"index\": 12, \"status\": \"error\", \"output\": \"Contains ansi_c_string\"}\n{\"index\": 13, \"status\": \"error\", \"output\": \"Heredoc with unquoted delimiter undergoes shell expansion\"}\n{\"index\": 14, \"status\": \"error\", \"output\": \"fatal: not a git repository (or any of the parent directories): .git\"}\n{\"index\": 15, \"status\": \"executed\", \"output\": \"canary-test-complete\"}\n```",
+  "results": [
     {
       "id": "here-string-unquoted",
-      "check": 11,
       "category": "cc_workaround",
+      "check": 11,
+      "cc_behavior": "cc_blocked",
       "cmd": "cat <<< $SOME_VAR",
-      "hook_verdict": "pass",
       "rationale": "Here-string with unquoted variable — hook passes through (not auto-approved). Tests CC's native handling of <<< syntax."
     },
     {
       "id": "here-string-quoted",
-      "check": null,
       "category": "cc_handles_natively",
+      "check": null,
+      "cc_behavior": "executed",
       "cmd": "cat <<< \"hello world\"",
-      "hook_verdict": "pass",
       "rationale": "Here-string with quoted literal. Check 11 was removed in v0.9.0 after CC 2.1.112 audit confirmed CC no longer prompts for this pattern. Sentinel retained to detect regression — if CC starts blocking again, reinstate check 11."
     },
     {
       "id": "compound-cd-and-git",
-      "check": 13,
       "category": "cc_workaround",
+      "check": 13,
+      "cc_behavior": "cc_blocked",
       "cmd": "cd /tmp && git status",
-      "hook_verdict": "allow",
       "rationale": "Compound command with &&. CC blocks compound operators to prevent chaining attacks, but cd+git is safe. If CC stops prompting for &&, check 13 compound logic becomes unnecessary."
     },
     {
       "id": "compound-semicolons",
-      "check": 13,
       "category": "cc_workaround",
+      "check": 13,
+      "cc_behavior": "executed",
       "cmd": "echo hello; echo world",
-      "hook_verdict": "allow",
       "rationale": "Semicolon-separated safe commands. If CC stops prompting for ;, check 13 semicolon handling becomes unnecessary."
     },
     {
       "id": "for-loop-glob",
-      "check": 13,
       "category": "cc_workaround",
+      "check": 13,
+      "cc_behavior": "cc_blocked",
       "cmd": "for f in *.txt; do echo $f; done",
-      "hook_verdict": "allow",
       "rationale": "Simple for loop with glob iterator. CC flags the ; in loop syntax. If CC learns to parse shell loops natively, the flow-control handling in check 13 becomes unnecessary."
     },
     {
       "id": "for-loop-find-cmdsub",
-      "check": 13,
       "category": "cc_workaround",
+      "check": 13,
+      "cc_behavior": "cc_blocked",
       "cmd": "for f in $(find /tmp -name \"*.md\"); do head -5 \"$f\"; done",
-      "hook_verdict": "allow",
       "rationale": "For loop with $(find ...) command substitution — the exact pattern that triggered the bug report. Tests CC's handling of loops + command substitution + semicolons together."
     },
     {
       "id": "while-read-loop",
-      "check": 13,
       "category": "cc_workaround",
+      "check": 13,
+      "cc_behavior": "cc_blocked",
       "cmd": "while read -r line; do echo \"$line\"; done < /dev/null",
-      "hook_verdict": "allow",
       "rationale": "While-read loop pattern. Very common shell idiom. If CC handles while loops natively, the flow-control handling becomes unnecessary."
     },
     {
       "id": "if-then-fi",
-      "check": 13,
       "category": "cc_workaround",
+      "check": 13,
+      "cc_behavior": "executed",
       "cmd": "if [ -f /tmp ]; then echo exists; fi",
-      "hook_verdict": "allow",
       "rationale": "If/then/fi conditional. CC flags ; in the syntax. If CC parses conditionals natively, check 13 flow-control handling becomes unnecessary."
     },
     {
       "id": "pipeline-readonly",
-      "check": 14,
       "category": "cc_workaround",
+      "check": 14,
+      "cc_behavior": "cc_blocked",
       "cmd": "cat /dev/null | grep foo | head -5",
-      "hook_verdict": "allow",
       "rationale": "Read-only pipeline. CC blocks pipes to prevent command chaining. If CC learns to classify all-readonly pipelines, check 14 becomes unnecessary."
     },
     {
       "id": "find-exec-grep",
-      "check": 14,
       "category": "cc_workaround",
+      "check": 14,
+      "cc_behavior": "cc_blocked",
       "cmd": "find /tmp -name \"*.md\" -exec grep -l \"test\" {} \\;",
-      "hook_verdict": "allow",
       "rationale": "find -exec with readonly command and \\;. CC flags the backslash. If CC handles find -exec \\; natively, the find-exec path in check 14 becomes unnecessary."
     },
     {
       "id": "allowlist-npm",
-      "check": 15,
       "category": "cc_workaround",
+      "check": 15,
+      "cc_behavior": "executed",
       "cmd": "npm --version",
-      "hook_verdict": "allow",
       "rationale": "Command matching a typical permissions.allow rule. If CC's built-in allowlist expands to cover common dev tools, check 15 becomes less necessary."
     },
     {
-      "id": "pipeline-allowlisted-cmd",
-      "check": 14,
-      "category": "cc_workaround",
-      "cmd": "curl https://example.com | head -5",
-      "hook_verdict": "allow",
-      "rationale": "Pipeline where a stage (`curl`) is not in the hook's hardcoded safe list but matches a `Bash(curl *)` allow rule. Triggers check 14's allow-rule fallback (added v0.9.0). CC natively classifies the whole pipeline as unsafe even if individual stages are allowlisted. If CC learns to check each pipeline stage against permissions.allow, this fallback becomes unnecessary."
-    },
-    {
-      "id": "pipeline-doublequoted-cmdsub",
-      "check": 14,
-      "category": "cc_workaround",
-      "cmd": "bd create --description \"$(cat /tmp/foo.md)\" | head -20",
-      "hook_verdict": "allow",
-      "rationale": "Pipeline whose non-hardcoded command carries a double-quoted command substitution `\"$(cat ...)\"` — CC's tree-sitter surfaces an `Unhandled node type: string` prompt for this construct independent of allowlist match. Check 14's allow-rule fallback pre-empts it by emitting `permissionDecision: allow` when `bd` matches `Bash(bd *)`. If CC handles this node type cleanly, the fallback becomes less necessary."
-    },
-    {
       "id": "inline-trailing-comment",
-      "check": null,
       "category": "cc_workaround",
+      "check": null,
+      "cc_behavior": "executed",
       "cmd": "echo hello # trailing comment",
-      "hook_verdict": "pass",
       "rationale": "Inline trailing # comment on a single line. Hook no longer strips these (previous check 2 had a position-mapping bug that corrupted commands with quoted args). If CC ever starts prompting for single-line trailing #, we need to reinstate a quote-aware strip."
     },
     {
       "id": "ansi-c-string-allowlisted",
-      "check": 16,
       "category": "cc_workaround",
+      "check": 16,
+      "cc_behavior": "cc_blocked",
       "cmd": "echo $'line1\\nline2'",
-      "hook_verdict": "allow",
       "rationale": "Bash ANSI-C quoting ($'...'). CC's tree-sitter surfaces ansi_c_string as a feature that triggers a permission prompt independently of allowlist match — even `echo $'foo'` prompts in bare mode. Check 16 emits a hook allow override when the outer command is hardcoded-safe or allowlisted; empirically this pre-empts CC's feature prompt. If CC stops flagging ansi_c_string, check 16 becomes unnecessary."
     },
     {
       "id": "heredoc-in-cmdsub",
-      "check": 0,
       "category": "hook_deny",
+      "check": 0,
+      "cc_behavior": "cc_blocked",
       "cmd": "git commit -m \"$(cat <<EOF\nmsg\nEOF\n)\"",
-      "hook_verdict": "deny",
       "rationale": "Heredoc inside $(...). Hook denies with guidance (use -F /tmp/msg.txt). Baseline sentinel for check 0 — if CC ever starts handling this cleanly in zsh -c eval and its own parser, the deny may be over-aggressive."
     },
     {
       "id": "baseline-safe",
-      "check": null,
       "category": "baseline",
+      "check": null,
+      "cc_behavior": "executed_error",
       "cmd": "git status",
-      "hook_verdict": "pass",
       "rationale": "Control: safe single command. Should always be allowed by both hook and CC."
     },
     {
       "id": "baseline-echo",
-      "check": null,
       "category": "baseline",
+      "check": null,
+      "cc_behavior": "executed",
       "cmd": "echo canary-test-complete",
-      "hook_verdict": "pass",
       "rationale": "Control: simplest possible command. Verifies the test harness works."
     }
   ]

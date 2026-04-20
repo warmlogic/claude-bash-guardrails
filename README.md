@@ -8,8 +8,8 @@ Claude Code's built-in safe command list is narrow — mostly git read operation
 
 - **Safe pipelines** — `head | python3 -c "..." | head`, `grep ... | sort | uniq`, etc. CC prompts for pipes, but pipelines of known-safe commands (read-only tools, dev runtimes like `python3`/`node`, build tools) are safe
 - **`find -exec` with `\;`** — CC flags the backslash as "hiding command structure," but `\;` is standard `find -exec` syntax. Auto-approved when the exec'd command is known-safe (e.g., `grep`, `cat`, `head`)
-- **Here-strings** (`<<<`) with quoted literals — CC's heuristic flags `<<<` as potential file input, but `cmd <<< "string"` just feeds a literal to stdin
 - **Shell loops/conditionals** — `for f in $(find ...); do head "$f"; done`, `while read`, `if/then/fi`, etc. CC flags the `;` operators in loop syntax, but these are safe when all inner commands are known-safe
+- **ANSI-C quoted strings** (`$'...'`) with safe outer commands — CC's tree-sitter flags `ansi_c_string` as a feature needing review, prompting even when the outer command is allowlisted. Auto-approved when the outer command is hardcoded-safe (`git`, `gh`, `bd`, etc.) or matches your allow rules
 - **Allowlisted commands** — redundant safety net for when CC's own pattern matching misses due to special characters
 
 ## What it does
@@ -23,10 +23,10 @@ Checks:
    0  deny    Heredoc inside $(...) → deny (zsh/tree-sitter parser trap; suggests -F file)
    1  strip   Comment-only lines → strip (prevents CC's #-after-newline heuristic)
    3  strip   Leading/trailing whitespace → trim (fixes allowlist matching)
-  11  allow   Here-strings (<<<) with quoted literals → allow (no file read)
   13  allow   Compound commands (&&, ||, ;) and shell loops/conditionals → allow if all sub-commands are safe
-  14  allow   Safe pipelines / find -exec → allow (all stages are known-safe)
+  14  allow   Safe pipelines / find -exec → allow (stages are known-safe or allowlisted)
   15  allow   Commands matching permissions.allow → allow (checks settings.json + settings.local.json)
+  16  allow   ANSI-C quoted strings ($'...') with safe outer cmd → allow (overrides CC's ansi_c_string feature prompt)
 ```
 
 ## Installation
