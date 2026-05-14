@@ -21,6 +21,7 @@ bash-guardrails — PreToolUse hook for Claude Code's Bash tool
 
 Checks:
    0  deny    Heredoc inside $(...) → deny (zsh/tree-sitter parser trap; suggests -F file)
+   4  deny    Interpreter heredoc (python3/node/ruby/perl <<EOF) → deny (CC strips indentation; suggests temp file)
    1  strip   Comment-only lines → strip (prevents CC's #-after-newline heuristic)
    3  strip   Leading/trailing whitespace → trim (fixes allowlist matching)
   13  allow   Compound commands (&&, ||, ;) and shell loops/conditionals → allow if all sub-commands are safe

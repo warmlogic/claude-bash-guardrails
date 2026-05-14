@@ -31,7 +31,30 @@ if printf '%s' "$cmd" | grep -qF '$(cat <<'; then
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "deny",
-      permissionDecisionReason: "Heredoc inside command substitution (`$(cat <<EOF ... EOF)`) is a shell-parser trap in Claude Code — it fails zsh -c eval when chained with `&&` and trips CC bash tool parser with `Unhandled node type: string`. Write the content to a temp file with the Write tool, then pass it via a file flag: `git commit -F /tmp/msg.txt`, `gh pr create --body-file /tmp/body.txt`, etc."
+      permissionDecisionReason: "Heredoc inside command substitution (`$(cat <<EOF ... EOF)`) is a shell-parser trap in Claude Code — it fails zsh -c eval when chained with `&&` and trips CC bash tool parser with `Unhandled node type: string`. Write the content to a temp file with the Write tool, then pass it via a file flag: `git commit -F /tmp/msg.txt`, `gh pr create --body-file /tmp/body.txt`, etc. Do NOT delete the temp file afterward — /tmp is self-cleaning and `rm /tmp/...` triggers a permission prompt."
+    }
+  }'
+  exit 0
+fi
+
+#@check  4  deny    Interpreter heredoc (python3/node/ruby/perl <<EOF) → deny with guidance (CC strips indentation)
+# --- 4. Deny interpreter + heredoc ---
+# CC's Bash tool strips ALL leading whitespace from every line of the command
+# string before execution, including heredoc body lines. Python code in a
+# heredoc silently loses indentation and fails with IndentationError at
+# runtime — with no clear signal of the root cause from CC.
+# The fix is always to write the script to a temp file with the Write tool
+# and run the interpreter on the file directly.
+# Uses (^|[[:space:]])<<-?[A-Za-z_'"] to require a valid heredoc delimiter
+# character after << (letter/underscore/quote) — excludes arithmetic <<
+# (e.g. 1 << 4 has a digit after <<) and <<< here-strings (< after <<).
+if printf '%s' "$cmd" | grep -Eq '^\s*(python3?|node|ruby|perl)\b' && \
+   printf '%s' "$cmd" | grep -Eq "(^|[[:space:]])<<-?[A-Za-z_'\"]"; then
+  jq -n '{
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: "Interpreter heredoc (e.g. `python3 <<EOF`) will silently break indentation — CC'\''s Bash tool strips all leading whitespace from every heredoc body line before execution, causing `IndentationError` in Python (and equivalent failures in other interpreters). Write the script to a temp file with the Write tool (`/tmp/script.py`), then run `python3 /tmp/script.py`. Do NOT delete the temp file afterward — /tmp is self-cleaning and `rm /tmp/...` triggers a permission prompt."
     }
   }'
   exit 0

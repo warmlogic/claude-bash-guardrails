@@ -85,6 +85,16 @@ _test_allow "git commit -F file passes through" "git commit -F /tmp/msg.txt" tru
 _test_allow "git commit -m simple message passes" "git commit -m \"simple message\"" true
 
 echo ""
+echo "--- Interpreter heredoc denial (check 4) ---"
+_test_deny "python3 heredoc with indented body" "$(printf 'python3 <<'"'"'EOF'"'"'\nfor i in range(3):\n    print(i)\nEOF')"
+_test_deny "node heredoc" "$(printf 'node <<'"'"'EOF'"'"'\nconst x = 1;\nconsole.log(x);\nEOF')"
+_test_deny "python3 heredoc unquoted delimiter" "$(printf 'python3 <<EOF\nprint(1)\nEOF')"
+# Regression: bitshift << must NOT trigger check 4
+_test_allow "python3 bitshift operator not a heredoc" "python3 -c 'print(1 << 4)'" true
+# Regression: here-string <<< must NOT trigger check 4
+_test_allow "python3 here-string not a heredoc" "python3 <<< 'print(42)'" true
+
+echo ""
 echo "--- Comment stripping and rewrite (checks 1-3) ---"
 _test_rewrite "comment-only lines stripped" "$(printf 'echo hello\n# this is a comment\necho world')"
 _test_allow "inline trailing comment passes through unchanged" "echo hello # trailing comment" true
