@@ -135,7 +135,47 @@
       "category": "hook_deny",
       "cmd": "python3 <<'EOF'\nfor i in range(3):\n    print(i)\nEOF",
       "hook_verdict": "deny",
-      "rationale": "Python script via heredoc. CC strips all leading whitespace from heredoc body lines before execution, silently breaking Python indentation (IndentationError at runtime). Hook denies with guidance to write a temp file. If CC ever stops stripping heredoc indentation, this check becomes over-aggressive."
+      "rationale": "Python script via heredoc (no space before delimiter). CC strips all leading whitespace from heredoc body lines before execution, silently breaking Python indentation (IndentationError at runtime). Hook denies with guidance to write a temp file. If CC ever stops stripping heredoc indentation, this check becomes over-aggressive."
+    },
+    {
+      "id": "python-heredoc-space-delimiter",
+      "check": 4,
+      "category": "hook_deny",
+      "cmd": "python3 - << 'PYEOF'\nfor i in range(3):\n    print(i)\nPYEOF",
+      "hook_verdict": "deny",
+      "rationale": "Python heredoc with space between << and the quoted delimiter (`<< 'PYEOF'`). LLMs commonly generate this spaced form. Regression guard: if check 4's regex fails to match the space case, this sentinel will fail."
+    },
+    {
+      "id": "python-heredoc-stdin-space-delimiter",
+      "check": 4,
+      "category": "hook_deny",
+      "cmd": "python3 /dev/stdin << 'PYEOF'\nfor i in range(3):\n    print(i)\nPYEOF",
+      "hook_verdict": "deny",
+      "rationale": "Python heredoc via /dev/stdin with space between << and quoted delimiter. Another common LLM pattern — regression guard for the spaced-delimiter form."
+    },
+    {
+      "id": "python-multiline-c-flag",
+      "check": "4b",
+      "category": "hook_deny",
+      "cmd": "python3 -c \"\nfor i in range(3):\n    print(i)\n\"",
+      "hook_verdict": "deny",
+      "rationale": "Multi-line python3 -c script. CC strips all leading whitespace from every line of the command string, silently breaking Python indentation (IndentationError at runtime). Verified in CC session. If CC ever stops stripping -c string indentation, this check becomes over-aggressive."
+    },
+    {
+      "id": "python-singleline-c-flag",
+      "check": "4b",
+      "category": "cc_workaround",
+      "cmd": "python3 -c 'print(42)'",
+      "hook_verdict": "pass",
+      "rationale": "Single-line python3 -c (no newlines). No indentation to strip — hook must NOT deny this. Regression guard: if check 4b's detection incorrectly fires on single-line -c scripts, this sentinel will fail."
+    },
+    {
+      "id": "python-multiline-c-no-indent",
+      "check": "4b",
+      "category": "cc_workaround",
+      "cmd": "python3 -c \"\nimport os\nprint(os.getcwd())\n\"",
+      "hook_verdict": "pass",
+      "rationale": "Multi-line python3 -c with only top-level statements (no indented body). CC strips leading whitespace but these lines have none — script runs fine. Check 4b must NOT deny this. Regression guard: if 4b fires on non-indented multi-line -c, this sentinel will fail."
     },
     {
       "id": "python-bitshift-inline",

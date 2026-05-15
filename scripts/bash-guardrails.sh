@@ -45,16 +45,40 @@ fi
 # runtime — with no clear signal of the root cause from CC.
 # The fix is always to write the script to a temp file with the Write tool
 # and run the interpreter on the file directly.
-# Uses (^|[[:space:]])<<-?[A-Za-z_'"] to require a valid heredoc delimiter
-# character after << (letter/underscore/quote) — excludes arithmetic <<
-# (e.g. 1 << 4 has a digit after <<) and <<< here-strings (< after <<).
+# Uses (^|[[:space:]])<<-?[[:space:]]*[A-Za-z_'"] to require a valid heredoc
+# delimiter character after << — excludes arithmetic << (e.g. 1 << 4 has a
+# digit after <<) and <<< here-strings (< after <<). The [[:space:]]* allows
+# for `<< 'EOF'` (space between << and delimiter), which LLMs commonly emit.
 if printf '%s' "$cmd" | grep -Eq '^\s*(python3?|node|ruby|perl)\b' && \
-   printf '%s' "$cmd" | grep -Eq "(^|[[:space:]])<<-?[A-Za-z_'\"]"; then
+   printf '%s' "$cmd" | grep -Eq "(^|[[:space:]])<<-?[[:space:]]*[A-Za-z_'\"]"; then
   jq -n '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "deny",
       permissionDecisionReason: "Interpreter heredoc (e.g. `python3 <<EOF`) will silently break indentation — CC'\''s Bash tool strips all leading whitespace from every heredoc body line before execution, causing `IndentationError` in Python (and equivalent failures in other interpreters). Write the script to a temp file with the Write tool (`/tmp/script.py`), then run `python3 /tmp/script.py`. Do NOT delete the temp file afterward — /tmp is self-cleaning and `rm /tmp/...` triggers a permission prompt."
+    }
+  }'
+  exit 0
+fi
+
+#@check  4b deny    Multi-line python3 -c with indented body → deny with guidance (CC strips indentation)
+# --- 4b. Deny multi-line python3 -c with indented lines ---
+# Same root cause as check 4: CC strips leading whitespace from every line of
+# the command string. A multi-line `python3 -c "..."` loses all indentation
+# before the interpreter sees it, causing IndentationError on any control flow.
+# Verified: `python3 -c "\nfor i in range(3):\n    print(i)\n"` fails in CC.
+# Only fires when there are indented lines (leading whitespace on a non-first
+# line) — top-level-only scripts (no for/if/def body) work fine after stripping.
+# Uses awk: reads all lines, returns true if any line after line 1 starts with
+# a space or tab (i.e., there is an indented block).
+if printf '%s' "$cmd" | grep -Eq '^\s*python3?\b' && \
+   printf '%s' "$cmd" | grep -Eq '[[:space:]]-c[[:space:]]' && \
+   printf '%s' "$cmd" | awk 'NR>1 && /^[[:space:]]/{found=1; exit} END{exit !found}'; then
+  jq -n '{
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: "Multi-line `python3 -c` script will silently break indentation — CC'\''s Bash tool strips all leading whitespace from every line of the command string before execution, causing `IndentationError` on any indented control flow. Write the script to a temp file with the Write tool (`/tmp/script.py`), then run `python3 /tmp/script.py`. Do NOT delete the temp file afterward — /tmp is self-cleaning and `rm /tmp/...` triggers a permission prompt."
     }
   }'
   exit 0
