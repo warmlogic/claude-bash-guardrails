@@ -71,8 +71,7 @@ fi
 # line) — top-level-only scripts (no for/if/def body) work fine after stripping.
 # Uses awk: reads all lines, returns true if any line after line 1 starts with
 # a space or tab (i.e., there is an indented block).
-if printf '%s' "$cmd" | grep -Eq '^\s*python3?\b' && \
-   printf '%s' "$cmd" | grep -Eq '[[:space:]]-c[[:space:]]' && \
+if printf '%s' "$cmd" | grep -Eq '^\s*python3?\b[^|;&]*[[:space:]]-c[[:space:]]' && \
    printf '%s' "$cmd" | awk 'NR>1 && /^[[:space:]]/{found=1; exit} END{exit !found}'; then
   jq -n '{
     hookSpecificOutput: {

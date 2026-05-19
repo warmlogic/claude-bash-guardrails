@@ -356,7 +356,7 @@ for i in "${!sentinel_ids[@]}"; do
   results=$(echo "$results" | jq --arg id "$id" --arg cat "$category" \
     --arg check "$check" --arg beh "$behavior" --arg rat "$rationale" \
     --arg cmd "$cmd" \
-    '. + [{"id": $id, "category": $cat, "check": ($check | if . == "null" then null else tonumber end), "cc_behavior": $beh, "cmd": $cmd, "rationale": $rat}]')
+    '. + [{"id": $id, "category": $cat, "check": ($check | if . == "null" then null elif test("^[0-9]+$") then tonumber else . end), "cc_behavior": $beh, "cmd": $cmd, "rationale": $rat}]')
 done
 
 # --- Save baseline ---
