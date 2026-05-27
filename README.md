@@ -47,7 +47,7 @@ Enable the plugin in your Claude Code settings:
 Unit tests:
 
 ```bash
-bash plugins/bash-guardrails/tests/test-bash-guardrails.sh
+bash tests/test-bash-guardrails.sh
 ```
 
 ### Canary audit
@@ -56,13 +56,13 @@ Detects whether Claude Code's native permission system now handles patterns that
 
 ```bash
 # Check for CC version drift (no API cost)
-bash plugins/bash-guardrails/tests/test-canary.sh --diff
+bash tests/test-canary.sh --diff
 
 # View latest baseline (no API cost)
-bash plugins/bash-guardrails/tests/test-canary.sh --report
+bash tests/test-canary.sh --report
 
 # Full audit (~$0.02 with ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN)
-bash plugins/bash-guardrails/tests/test-canary.sh
+bash tests/test-canary.sh
 ```
 
 Or just ask Claude: "run the canary audit for bash-guardrails."

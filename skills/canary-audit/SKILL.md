@@ -15,13 +15,13 @@ Run the bash-guardrails canary audit to detect whether Claude Code's native perm
 Check if the CC version has changed since the last audit:
 
 ```bash
-bash plugins/bash-guardrails/tests/test-canary.sh --diff
+bash tests/test-canary.sh --diff
 ```
 
 ### View latest baseline (no API cost)
 
 ```bash
-bash plugins/bash-guardrails/tests/test-canary.sh --report
+bash tests/test-canary.sh --report
 ```
 
 ### Full audit (costs ~$0.02)
@@ -29,7 +29,7 @@ bash plugins/bash-guardrails/tests/test-canary.sh --report
 Run all sentinel commands through a fresh `claude -p --bare` session (no hooks, no plugins, no allow rules) to observe CC's native behavior:
 
 ```bash
-bash plugins/bash-guardrails/tests/test-canary.sh --yes
+bash tests/test-canary.sh --yes
 ```
 
 The `--yes` flag skips the interactive confirmation prompt. Without it, the script will ask for confirmation before spending API credits.
@@ -51,9 +51,9 @@ The script will:
 
 When preparing a bash-guardrails release:
 
-1. Run `bash plugins/bash-guardrails/tests/test-bash-guardrails.sh` (unit tests)
-2. Run `bash plugins/bash-guardrails/tests/test-canary.sh --diff` (version drift check)
-3. If drift detected, run `bash plugins/bash-guardrails/tests/test-canary.sh --yes` (full audit)
+1. Run `bash tests/test-bash-guardrails.sh` (unit tests)
+2. Run `bash tests/test-canary.sh --diff` (version drift check)
+3. If drift detected, run `bash tests/test-canary.sh --yes` (full audit)
 4. Review results — if all sentinels PASS, the hook's auto-approve checks may no longer be needed
 5. If removing a check, update the hook script AND the unit tests
 
