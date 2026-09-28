@@ -236,8 +236,8 @@ allow_rule_fallback() {
   [ ${#allow_rules[@]} -gt 0 ] && matches_rule "$1" "${allow_rules[@]}"
 }
 
-# Approve every unquoted $(...) and `...` in a command (non-nested; arithmetic
-# $((...)) is not a substitution and is dropped first).
+# Approve every unquoted $(...), `...`, and process substitution <(...) / >(...)
+# in a command (non-nested; arithmetic $((...)) is dropped first).
 vet_substitutions() {
   local s inner piece
   s=$(echo "$1" | sed -E 's/\$\(\([^)]*\)\)//g')
@@ -247,7 +247,7 @@ vet_substitutions() {
     while IFS= read -r piece; do
       is_cmd_approved "$piece" || return 1
     done < <(split_on_compound "$inner")
-  done < <(echo "$s" | grep -oE '\$\([^)]+\)|`[^`]+`' | sed -E -e 's/^\$\(//' -e 's/\)$//' -e 's/^`//' -e 's/`$//')
+  done < <(echo "$s" | grep -oE '[$<>]\([^)]+\)|`[^`]+`' | sed -E -e 's/^[$<>]\(//' -e 's/\)$//' -e 's/^`//' -e 's/`$//')
   return 0
 }
 
@@ -439,16 +439,33 @@ split_on_compound() {
 
 # Drop heredoc bodies (the lines after `<<DELIM` up to the DELIM line): they
 # are data, not commands, and an apostrophe in one would unbalance the quote
-# stripping. `<<<` here-strings are left alone.
+# stripping. A body is dropped only once its terminator line is found — a
+# misread `<<` (or an unterminated one) keeps every line, so nothing that
+# runs is hidden from the checks. `<<<` here-strings, a `<<` inside quotes,
+# and arithmetic `$(( a << b ))` are not heredoc starts.
 strip_heredocs() {
   printf '%s' "$1" | awk '
-    delim != "" { t = $0; gsub(/^[ \t]+|[ \t]+$/, "", t); if (t == delim) delim = ""; next }
+    delim != "" {
+      buf = buf "\n" $0
+      t = $0; gsub(/^[ \t]+|[ \t]+$/, "", t)
+      if (t == delim) { delim = ""; buf = "" }
+      next
+    }
     {
       print
-      if (match($0, /<<-?[ \t]*["\047]?[A-Za-z_][A-Za-z0-9_]*/) && substr($0, RSTART - 1, 1) != "<") {
-        d = substr($0, RSTART, RLENGTH); sub(/^<<-?[ \t]*["\047]?/, "", d); delim = d
+      # Unquote a quoted delimiter first (<<"EOF" becomes <<EOF), then drop
+      # the remaining quoted spans and arithmetic expansions.
+      s = $0
+      while (match(s, /<<-?[ \t]*[\047"][^\047"]+[\047"]/)) {
+        m = substr(s, RSTART, RLENGTH); gsub(/[\047"]/, "", m)
+        s = substr(s, 1, RSTART - 1) m substr(s, RSTART + RLENGTH)
       }
-    }'
+      gsub(/"[^"]*"/, "", s); gsub(/\047[^\047]*\047/, "", s); gsub(/\$\(\([^)]*\)\)/, "", s)
+      if (match(s, /<<-?[ \t]*[^ \t;&|<>()]+/) && substr(s, RSTART - 1, 1) != "<") {
+        d = substr(s, RSTART, RLENGTH); sub(/^<<-?[ \t]*/, "", d); delim = d; buf = ""
+      }
+    }
+    END { if (delim != "") printf "%s\n", substr(buf, 2) }'
 }
 
 cmd_no_quotes=$(strip_quoted_mls "$(strip_heredocs "$cmd")")

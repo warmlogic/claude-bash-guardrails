@@ -351,6 +351,16 @@ _test_allow "pipe inside a cmd sub in a loop approved" 'for f in *.md; do n=$(he
 _test_allow "multi-line: every line safe approved" "$(printf 'cd /tmp\necho ok\ngrep -c x f')" true
 _test_allow "multi-line: an unsafe line blocks" "$(printf 'cd /tmp\nrm -rf /')" false
 _test_allow "heredoc body lines are data, not commands" "$(printf 'cat > /tmp/n.md <<EOF\ndon'"'"'t rm -rf /\nEOF')" true
+_test_allow "quoted << is not a heredoc (double quotes)" "$(printf 'echo "<<EOF"\nrm -rf ~')" false
+_test_allow "quoted << is not a heredoc (single quotes)" "$(printf "echo 'x <<EOF'\nrm -rf ~")" false
+_test_allow "quoted << in grep pattern hides no line" "$(printf "grep -n '<<EOF' f.sh && ls\ngit reset --hard")" false
+_test_allow "quoted << mid-string hides no line" "$(printf 'echo "use <<EOF here" && ls\nrm -rf ~')" false
+_test_allow "arithmetic << hides no line" "$(printf 'echo $((1 << FOO)) && ls\nrm -rf ~')" false
+_test_allow "hyphenated heredoc delimiter terminates" "$(printf 'cd x && cat > f <<END-MSG\nbody\nEND-MSG\nrm -rf ~')" false
+_test_allow "quoted << with a matching EOF line hides nothing" "$(printf "ls && echo '<<EOF'\nrm -rf ~\nEOF")" false
+_test_allow "process substitution is vetted" "cd x && cat <(rm -rf ~)" false
+_test_allow "safe process substitution approved" "cd x && diff <(ls a) <(ls b)" true
+_test_allow "quoted heredoc delimiter body is data" "$(printf "cat > /tmp/n.md <<'EOF'\ndon't\nEOF")" true
 _test_allow "cmd after a heredoc is vetted" "$(printf 'cat > /tmp/n.md <<EOF\nbody\nEOF\nrm -rf ~')" false
 _test_allow_with_settings "one allowlisted line doesn't carry a second line" "$(printf 'git status\nrm -rf ~')" false \
   '{"permissions":{"allow":["Bash(npm test*)","Bash(git status*)"]}}'
