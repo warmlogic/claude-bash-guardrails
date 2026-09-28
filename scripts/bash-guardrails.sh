@@ -7,7 +7,7 @@
 # rewrites the command (no updatedInput), and reads no settings.
 #
 # Traps, checked on unquoted text only (quoted strings, heredoc bodies,
-# comments, ${...} and $[...] expansions, case ... esac blocks, [[ ]] tests, and
+# comments, ${...} and $[...] expansions, anything after a case keyword, [[ ]] tests, and
 # arithmetic are skipped):
 #   eq    a word starting with "==": `[ a == b ]`, `echo ===`
 #         (zsh: "= not found" / "== not found")
@@ -37,13 +37,10 @@ function check_word() {
   if (w == "") return
   if (skip_until != "") { if (w == skip_until) skip_until = ""; reset(); return }
   if (w == "[[") { skip_until = "]]"; reset(); return }
-  # Inside case ... esac, patterns like --file=*|-f=*) are matched, never
-  # globbed, so check nothing there (a missed trap is cheap, a false deny is not).
-  if (m ~ /^u+$/ && (prev == "" || prev ~ /^(do|then|else|elif|[{!])$/)) {
-    if (w == "case") in_case++
-    else if (w == "esac" && in_case > 0) in_case--
-  }
-  if (in_case > 0) { reset(); return }
+  # case patterns (--file=*|-f=*) are matched, never globbed, and tracking
+  # where they end is fiddly, so stop at the first unquoted "case" word: a
+  # missed trap after it is cheap, a false deny is not.
+  if (w == "case" && m ~ /^u+$/) exit
   if (substr(w, 1, 2) == "==" && substr(m, 1, 2) == "uu") hit("eq")
   if (w ~ /^--?[A-Za-z][A-Za-z0-9_-]*=/ && has_glob(index(w, "=") + 1)) hit("glob")
   if (prev ~ /^-i?(name|path|wholename)$/ && has_glob(1)) hit("glob")
