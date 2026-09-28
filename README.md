@@ -4,7 +4,7 @@ A trap-only PreToolUse hook for Claude Code's Bash tool. It denies a command onl
 
 ## What it catches
 
-Both traps are zsh defaults (the `EQUALS` and `NOMATCH` options), and both are commands that work in bash, which is why models keep writing them. The hook checks unquoted text only; quoted strings, heredoc bodies, comments, `${…}` and `$[…]` expansions, `case` patterns, `[[ … ]]` tests, and `(( … ))` arithmetic are skipped.
+Both traps are zsh defaults (the `EQUALS` and `NOMATCH` options), and both are commands that work in bash, which is why models keep writing them. The hook checks unquoted text only; quoted strings, heredoc bodies, comments, `${…}` and `$[…]` expansions, everything inside `case … esac`, `[[ … ]]` tests, and `(( … ))` arithmetic are skipped.
 
 | Trap                                       | Example                                | zsh says                                       | Write instead                                 |
 | ------------------------------------------ | -------------------------------------- | ---------------------------------------------- | --------------------------------------------- |

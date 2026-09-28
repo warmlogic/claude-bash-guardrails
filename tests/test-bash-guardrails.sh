@@ -95,7 +95,12 @@ expect_silent "\${f%.*} in flag value" 'f=a.png; echo --out=${f%.*}.jpg --t=${f%
 expect_silent "\${arr[1]} and \${x:-*}" 'arr=(a b); echo --x=${arr[1]} --y=${HOME:-*}' proven
 expect_silent "\$[...] arithmetic" 'echo --flag=$[2*3]' proven
 expect_silent "case pattern --file=*)" 'for a in x; do case $a in --file=*) echo f;; ?a=b) echo q;; esac; done' proven
+expect_silent "case alternation and spaced pattern" 'case "$1" in --file=*|--out=*) echo f;; ?a=b|x) echo q;; --g=* ) echo g;; esac' proven
+expect_silent "esac inside a case body" 'case x in y) echo esac; echo;; --f=*) echo;; esac' proven
+expect_silent "quoted esac is not a keyword" 'case x in y) "esac";; --f=*) echo;; esac' proven
 expect_deny  "trap after esac" 'case x in --f=*) echo f;; esac; echo --include=*.md' proven
+expect_deny  "bare word case is not a keyword" 'echo case; echo --include=*.md' proven
+expect_silent "quoted brace inside \${}" 'x=1; echo ${x:-"}"} foo" --include=*.md "bar' proven
 
 echo "== glob trap: find -name *pattern"
 expect_deny  "find -name *.md" 'find . -name *.md' proven

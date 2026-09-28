@@ -7,7 +7,7 @@
 # rewrites the command (no updatedInput), and reads no settings.
 #
 # Traps, checked on unquoted text only (quoted strings, heredoc bodies,
-# comments, ${...} and $[...] expansions, case patterns, [[ ]] tests, and
+# comments, ${...} and $[...] expansions, case ... esac blocks, [[ ]] tests, and
 # arithmetic are skipped):
 #   eq    a word starting with "==": `[ a == b ]`, `echo ===`
 #         (zsh: "= not found" / "== not found")
@@ -37,8 +37,13 @@ function check_word() {
   if (w == "") return
   if (skip_until != "") { if (w == skip_until) skip_until = ""; reset(); return }
   if (w == "[[") { skip_until = "]]"; reset(); return }
-  if (w == "case") in_case++
-  if (w == "esac" && in_case > 0) in_case--
+  # Inside case ... esac, patterns like --file=*|-f=*) are matched, never
+  # globbed, so check nothing there (a missed trap is cheap, a false deny is not).
+  if (m ~ /^u+$/ && (prev == "" || prev ~ /^(do|then|else|elif|[{!])$/)) {
+    if (w == "case") in_case++
+    else if (w == "esac" && in_case > 0) in_case--
+  }
+  if (in_case > 0) { reset(); return }
   if (substr(w, 1, 2) == "==" && substr(m, 1, 2) == "uu") hit("eq")
   if (w ~ /^--?[A-Za-z][A-Za-z0-9_-]*=/ && has_glob(index(w, "=") + 1)) hit("glob")
   if (prev ~ /^-i?(name|path|wholename)$/ && has_glob(1)) hit("glob")
@@ -103,6 +108,7 @@ BEGIN {
       open_ch = substr(s, i + 1, 1); depth = 0
       for (; i <= n; i++) {
         ch = substr(s, i, 1)
+        if (ch == "\"" || ch == SQ || ch == "\\") exit   # too tangled to track: fail open
         add(ch, "q")
         if (ch == open_ch) depth++
         else if (ch == close_ch && --depth == 0) { i++; break }
@@ -110,11 +116,6 @@ BEGIN {
       continue
     }
     if (c == "$" && substr(s, i + 1, 1) == "(") { check_word(); prev = ""; i += 2; continue }
-    if (c == ")" && in_case > 0) {
-      # A case pattern such as --file=*) is matched, never globbed.
-      w = ""; m = ""; prev = ""; i++
-      continue
-    }
     if (c ~ /[;&|<>()]/) {
       check_word(); prev = ""
       if (substr(s, i, 3) == "<<<") i += 3; else if (is_heredoc()) read_heredoc(); else i++
