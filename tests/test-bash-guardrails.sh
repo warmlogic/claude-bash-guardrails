@@ -27,12 +27,14 @@ bad() { fail=$((fail + 1)); printf 'FAIL: %s\n' "$1"; [ -n "${2:-}" ] && printf 
 
 prove() { # <name> <command> <want: error|clean>
   $HAS_ZSH || return 0
-  local err
-  err=$(cd "$EMPTY_DIR" && zsh -fc "$2" 2>&1 >/dev/null)
+  local err rc
+  err=$(cd "$EMPTY_DIR" && zsh -fc "$2" 2>&1 >/dev/null); rc=$?
   if grep -qE 'no matches found|= not found' <<<"$err"; then
     [ "$3" = error ] && ok || bad "$1 (zsh proof)" "zsh errored: $err"
+  elif [ "$3" = clean ] && [ "$rc" -eq 0 ]; then
+    ok
   else
-    [ "$3" = clean ] && ok || bad "$1 (zsh proof)" "zsh did not reject it"
+    bad "$1 (zsh proof)" "want $3, got rc=$rc: ${err:-no trap error}"
   fi
 }
 
@@ -82,17 +84,24 @@ expect_deny  "second of two --include" "grep -rn foo . --include='*.sh' --includ
 expect_deny  "--exclude-dir=node*" 'grep -rn foo . --exclude-dir=node*'
 expect_deny  "? in flag value" 'echo --x=a?b' proven
 expect_deny  "[..] in flag value" 'echo --jq=.a[0]' proven
-expect_silent "single-quoted flag glob" "grep -rn foo . --include='*.md'" proven
-expect_silent "double-quoted flag glob" 'grep -rn foo . --include="*.md"' proven
+expect_deny  "quoted flag name, unquoted glob" 'echo "--x"=*' proven
+expect_silent "single-quoted flag glob" "grep -rn foo . --include='*.md' || true" proven
+expect_silent "double-quoted flag glob" 'grep -rn foo . --include="*.md" || true' proven
 expect_silent "quoted whole flag" "echo '--include=*.md'" proven
 expect_silent "escaped flag glob" 'echo --include=\*.md' proven
 expect_silent "flag without glob" 'git log --format=%H -n1 --since=yesterday'
 expect_silent "assignment with glob" 'x=--include=*.md; echo "$x"' proven
+expect_silent "\${f%.*} in flag value" 'f=a.png; echo --out=${f%.*}.jpg --t=${f%%.*}' proven
+expect_silent "\${arr[1]} and \${x:-*}" 'arr=(a b); echo --x=${arr[1]} --y=${HOME:-*}' proven
+expect_silent "\$[...] arithmetic" 'echo --flag=$[2*3]' proven
+expect_silent "case pattern --file=*)" 'for a in x; do case $a in --file=*) echo f;; ?a=b) echo q;; esac; done' proven
+expect_deny  "trap after esac" 'case x in --f=*) echo f;; esac; echo --include=*.md' proven
 
 echo "== glob trap: find -name *pattern"
 expect_deny  "find -name *.md" 'find . -name *.md' proven
 expect_deny  "find -iname" 'find . -type f -iname *readme*'
 expect_deny  "find -path" 'find . -path ./src/*'
+expect_deny  "bracket-only glob" 'find . -name [Rr]eadme' proven
 expect_silent "find -name quoted" "find . -name '*.md'" proven
 expect_silent "find -name escaped" 'find . -name \*.md' proven
 expect_silent "find -name literal" 'find . -name README.md' proven
@@ -103,6 +112,7 @@ expect_deny  "escaped & still has ?" 'gh api repos/o/r/actions/runs?event=pull_r
 expect_deny  "query proof" 'echo repos/x?ref=y' proven
 expect_silent "quoted query" "gh api 'repos/o/r/contents/a.yml?ref=main'"
 expect_silent "double-quoted query" 'curl -s "https://h/p?a=1&b=2"'
+expect_silent "\${x:?a=b} is not a query" 'x=1; echo ${x:?msg=bad} ${x%%?ref=*}' proven
 expect_silent "query in assignment" 'U=https://h/p?a=1; echo "$U"' proven
 expect_silent "export query" 'export U=https://h/p?a=1' proven
 
@@ -113,17 +123,22 @@ expect_silent "path glob" 'cat plugins/*/README.md'
 
 echo "== pass-through: heredocs, multi-line, quoting"
 expect_silent "heredoc with # lines and indentation" "$(printf '%s\n' \
-  "cat > out.md <<'EOF'" '## Summary' '    indented line' '# not a comment' \
+  "cat <<'EOF'" '## Summary' '    indented line' '# not a comment' \
   '[ a == b ] --include=*.md find -name *.x repos/x?ref=y' '=====' 'EOF')" proven
 expect_silent "heredoc <<- with tabs" "$(printf '%s\n' 'cat <<-EOF' $'\t=====' $'\tEOF')" proven
+expect_deny  "trap after a heredoc ends" "$(printf '%s\n' "cat <<'EOF'" '=====' 'EOF' 'echo ===')" proven
+expect_deny  "trap after a <<- heredoc ends" "$(printf '%s\n' 'cat <<-EOF' $'\t=====' $'\tEOF' 'echo ===')" proven
+expect_deny  "trap after a \$(cat <<EOF) message" "$(printf '%s\n' \
+  'echo "$(cat <<'"'"'EOF'"'"'' 'He said "=== is bad"' 'EOF' ')" && echo ==='  )" proven
 expect_silent "commit message via \$(cat <<EOF)" "$(printf '%s\n' \
-  'git commit -m "$(cat <<'"'"'EOF'"'"'' 'feat: x' '' 'He said "=== is bad" and --include=*.md' 'EOF' ')"')"
+  'git commit -m "$(cat <<'"'"'EOF'"'"'' 'feat: x' '' 'He said "=== is bad" and --include=*.md' 'a 5" === wide screen' 'EOF' ')"')"
 expect_silent "multi-line python3 -c" "$(printf '%s\n' 'python3 -c "' 'for i in range(3):' '    if i == 1:' '        print(i)' '"')"
 expect_silent "python heredoc" "$(printf '%s\n' "python3 - <<'PY'" 'import glob' 'x = glob.glob(\"*.md\")' '# comment' '    y == 2' 'PY')"
 expect_silent "here-string" 'grep -c x <<< "a == b"'
 expect_silent "multi-line quoted arg" "$(printf '%s\n' 'gh pr create --title t --body "## Summary' '' '    - [ ] == check' '--include=*.md"')"
 expect_silent "ANSI-C string" "printf \$'a == b\\\\n*.md\\\\n'"
 expect_silent "plain command" 'git status'
+expect_silent "oversized command fails open" "echo ===; $(printf '%40000s' '' | tr ' ' x)"
 expect_silent "empty command" ''
 
 echo "== when the hook stays out of it"

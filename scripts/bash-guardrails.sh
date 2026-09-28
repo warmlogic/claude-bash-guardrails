@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # bash-guardrails: a trap-only PreToolUse hook for Claude Code's Bash tool.
 #
-# It denies a command only when zsh is certain to reject it, and says in one
+# It denies a command only when zsh (default options) will reject it, and says in one
 # line what to write instead. Otherwise it exits 0 with no output, so Claude
 # Code's own permission handling decides. It never emits "allow", never
 # rewrites the command (no updatedInput), and reads no settings.
 #
 # Traps, checked on unquoted text only (quoted strings, heredoc bodies,
-# comments, [[ ]] tests, and arithmetic are skipped):
+# comments, ${...} and $[...] expansions, case patterns, [[ ]] tests, and
+# arithmetic are skipped):
 #   eq    a word starting with "==": `[ a == b ]`, `echo ===`
 #         (zsh: "= not found" / "== not found")
 #   glob  a glob zsh cannot match (zsh: "no matches found"):
@@ -18,6 +19,7 @@ set -uo pipefail
 # runs the user's login shell, so under any other shell there is nothing to catch.
 [ "${SHELL##*/}" = zsh ] || exit 0
 
+MAX_SCAN_CHARS=32768
 cmd=$(jq -r '.tool_input.command // ""' 2>/dev/null) || exit 0
 
 # Fast path: every trap needs one of these characters.
@@ -25,6 +27,8 @@ case "$cmd" in
   *'='* | *'*'* | *'?'* | *'['*) ;;
   *) exit 0 ;;
 esac
+# The scan below is quadratic in word length; fail open on huge commands.
+[ "${#cmd}" -le "$MAX_SCAN_CHARS" ] || exit 0
 
 hit=$(CMD="$cmd" awk '
 function reset() { prev = w; w = ""; m = "" }
@@ -33,8 +37,10 @@ function check_word() {
   if (w == "") return
   if (skip_until != "") { if (w == skip_until) skip_until = ""; reset(); return }
   if (w == "[[") { skip_until = "]]"; reset(); return }
+  if (w == "case") in_case++
+  if (w == "esac" && in_case > 0) in_case--
   if (substr(w, 1, 2) == "==" && substr(m, 1, 2) == "uu") hit("eq")
-  if (w ~ /^--?[A-Za-z][A-Za-z0-9_-]*=/ && substr(m, 1, 1) == "u" && has_glob(index(w, "=") + 1)) hit("glob")
+  if (w ~ /^--?[A-Za-z][A-Za-z0-9_-]*=/ && has_glob(index(w, "=") + 1)) hit("glob")
   if (prev ~ /^-i?(name|path|wholename)$/ && has_glob(1)) hit("glob")
   # zsh does not glob assignments (FOO=a?b=1, export FOO=...).
   if (w !~ /^[A-Za-z_][A-Za-z0-9_]*=/ && match(w, /\?[A-Za-z_][A-Za-z0-9_]*=/) && substr(m, RSTART, 1) == "u") hit("glob")
@@ -91,7 +97,24 @@ BEGIN {
       i = e ? i + e + 1 : n + 1
       continue
     }
+    if (c == "$" && substr(s, i + 1, 1) ~ /[{[]/) {
+      # ${...} and $[...] hold patterns and subscripts zsh never globs.
+      close_ch = substr(s, i + 1, 1) == "{" ? "}" : "]"
+      open_ch = substr(s, i + 1, 1); depth = 0
+      for (; i <= n; i++) {
+        ch = substr(s, i, 1)
+        add(ch, "q")
+        if (ch == open_ch) depth++
+        else if (ch == close_ch && --depth == 0) { i++; break }
+      }
+      continue
+    }
     if (c == "$" && substr(s, i + 1, 1) == "(") { check_word(); prev = ""; i += 2; continue }
+    if (c == ")" && in_case > 0) {
+      # A case pattern such as --file=*) is matched, never globbed.
+      w = ""; m = ""; prev = ""; i++
+      continue
+    }
     if (c ~ /[;&|<>()]/) {
       check_word(); prev = ""
       if (substr(s, i, 3) == "<<<") i += 3; else if (is_heredoc()) read_heredoc(); else i++
@@ -141,7 +164,7 @@ word=${hit#*$'\t'}
 if [ "$kind" = eq ]; then
   reason="zsh reads the unquoted word \`$word\` as a command path and fails (\"= not found\"): quote it (\`echo '==='\`), or compare with \`[[ a == b ]]\` or \`[ a = b ]\`."
 else
-  reason="zsh fails on the unmatched glob \`$word\` (\"no matches found\"): quote it, e.g. \`--include='*.md'\`, \`-name '*.md'\`, or \`'repos/x?ref=main'\`."
+  reason="zsh expands the unquoted glob \`$word\` against local files, and fails (\"no matches found\") when nothing matches: quote it, e.g. \`--include='*.md'\`, \`-name '*.md'\`, or \`'repos/x?ref=main'\`."
 fi
 
 jq -n --arg r "$reason" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'

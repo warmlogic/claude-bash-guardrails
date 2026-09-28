@@ -22,7 +22,7 @@ write instead, or exit 0 with no output. Keep it that way:
   The version before this one corrupted heredocs and multi-line arguments exactly that way.
 - **Never read settings files.** The hook's answer depends on the command text and `$SHELL` only.
 - **Add a trap only with evidence and near-zero false positives.** A trap is a command the shell
-  is certain to reject. If the answer depends on the filesystem (a bare `*.md` that may match) or
+  rejects under default options. If the answer depends on the filesystem (a bare `*.md` that may match) or
   on quoting the scanner can't see (text nested inside another quoted command), leave it out.
   Fail open: an unparseable command (an unterminated quote, say) passes through.
 

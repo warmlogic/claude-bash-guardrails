@@ -1,21 +1,27 @@
 # bash-guardrails
 
-A trap-only PreToolUse hook for Claude Code's Bash tool. It denies a command only when zsh is certain to reject it, with a one-line reason saying what to write instead, so the model fixes the command before running it rather than after reading an error. Every other command passes through untouched: the hook prints nothing, never approves anything, and never rewrites the command.
+A trap-only PreToolUse hook for Claude Code's Bash tool. It denies a command only when zsh will reject it (or, for `find -name *.md`, silently change its meaning), with a one-line reason saying what to write instead, so the model fixes the command before running it rather than after reading an error. Every other command passes through untouched: the hook prints nothing, never approves anything, and never rewrites the command.
 
 ## What it catches
 
-Both traps are zsh defaults (the `EQUALS` and `NOMATCH` options), and both are commands that work in bash, which is why models keep writing them. The hook checks unquoted text only; quoted strings, heredoc bodies, comments, `[[ … ]]` tests, and `(( … ))` arithmetic are skipped.
+Both traps are zsh defaults (the `EQUALS` and `NOMATCH` options), and both are commands that work in bash, which is why models keep writing them. The hook checks unquoted text only; quoted strings, heredoc bodies, comments, `${…}` and `$[…]` expansions, `case` patterns, `[[ … ]]` tests, and `(( … ))` arithmetic are skipped.
 
 | Trap                                       | Example                                | zsh says                                       | Write instead                                 |
 | ------------------------------------------ | -------------------------------------- | ---------------------------------------------- | --------------------------------------------- |
 | A word starting with `==`                  | `[ "$a" == b ]`, `echo ===`            | `= not found`                                  | `[ "$a" = b ]`, `[[ $a == b ]]`, `echo '==='` |
 | A glob in a `--flag=` value                | `grep -rn x . --include=*.md`          | `no matches found`                             | `--include='*.md'`                            |
-| A glob after `find -name`/`-iname`/`-path` | `find . -name *.md`                    | `no matches found` (or a silently wrong match) | `-name '*.md'`                                |
+| A glob after `find -name`, `-iname`, `-path`, `-ipath`, `-wholename`, or `-iwholename` | `find . -name *.md` | `no matches found`, or it matches a local file and `find` searches for that name instead | `-name '*.md'` |
 | A `?key=` query string                     | `gh api repos/o/r/contents/f?ref=main` | `no matches found`                             | `'repos/o/r/contents/f?ref=main'`             |
 
 A bare glob like `ls *.md` or `grep x *.py` is left alone on purpose: it usually matches, and the hook can't tell from the command text whether it will.
 
 The hook only acts when your login shell (`$SHELL`) is zsh, which is the shell Claude Code's Bash tool runs. Under bash it is a no-op.
+
+Known limits, all of which fail open (the command runs and zsh reports whatever it reports):
+
+- The hook assumes zsh's default options. If your zsh config sets `nonomatch`, `nullglob`, `cshnullglob`, or `noequals`, zsh accepts some commands the hook denies; disable the plugin in that case.
+- A trap nested inside another quoted command (`zsh -c 'echo ==='`) isn't seen.
+- Commands longer than 32 KB aren't scanned.
 
 ## Why deny, not rewrite or allow
 

@@ -1,6 +1,6 @@
 {
   "name": "bash-guardrails",
-  "description": "Trap-only PreToolUse hook for Claude Code's Bash tool: denies commands zsh is certain to reject, like an unquoted --include=*.md glob or [ a == b ], with a one-line fix, and stays silent otherwise",
+  "description": "Trap-only PreToolUse hook for Claude Code's Bash tool: denies commands zsh will reject, like an unquoted --include=*.md glob or [ a == b ], with a one-line fix, and stays silent otherwise",
   "author": {
     "name": "Matt Mollison",
     "email": "matt.mollison@gmail.com"
