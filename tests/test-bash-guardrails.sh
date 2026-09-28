@@ -8,10 +8,68 @@ HOOK="$SCRIPT_DIR/../scripts/bash-guardrails.sh"
 pass=0
 fail=0
 
+# Hermetic HOME: the hook reads $HOME/.claude/settings.json(+.local) and
+# $CLAUDE_PROJECT_DIR/.claude/settings.json(+.local) for permissions.allow /
+# permissions.deny rules. Point every hook invocation at a throwaway HOME
+# with no project dir, so a developer's real permissions (e.g. an explicit
+# `Bash(rm -rf *)` deny, or the *absence* of an allow rule this suite
+# assumes) can't leak into the suite and flip an expected result. The
+# mktemp dir is left in place on purpose (no `rm` cleanup here).
+#
+# A fixed baseline settings.json ships the allow rules many "passes
+# through" tests below assume for ordinary dev commands (git, python3,
+# npm, curl, wget, cat, echo, find, ...) — mirroring what a real Claude
+# Code user's permissions.allow typically looks like, per this plugin's
+# own README ("if you have a broad permissions.allow list ... this plugin
+# adds minimal value"). `rm` is deliberately absent: an unscoped `Bash(rm
+# *)` rule would flip the negative rm-safety-carveout tests below (`rm -rf
+# /`, `rm -rf ~`, bare `rm -rf`, etc.) from blocked to allowed, since check
+# 13's compound loop falls back to the user's allow rules with no
+# hardcoded-command guard. `Bash(find *)` is safe to include: the
+# find/-delete and find/-exec negative tests below only exercise the
+# unpiped, unescaped-\; codepath (check 14), which does guard its
+# allow-rule fallback behind "first token isn't hardcoded".
+TEST_HOME="$(mktemp -d)"
+mkdir -p "$TEST_HOME/.claude"
+cat > "$TEST_HOME/.claude/settings.json" <<'BASELINE_SETTINGS'
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat *)",
+      "Bash(echo *)",
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Bash(PYTHONPATH=*)",
+      "Bash(node *)",
+      "Bash(npm *)",
+      "Bash(pip *)",
+      "Bash(pip3 *)",
+      "Bash(cargo *)",
+      "Bash(make *)",
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Bash(jq *)",
+      "Bash(bd *)",
+      "Bash(chmod *)",
+      "Bash(tar *)",
+      "Bash(find *)"
+    ]
+  }
+}
+BASELINE_SETTINGS
+
+# Run the hook hermetically: fixed HOME, no project dir, unless the caller
+# passes its own HOME (see _test_allow_with_settings below).
+run_hook() {
+  HOME="${HOOK_TEST_HOME:-$TEST_HOME}" CLAUDE_PROJECT_DIR= bash "$HOOK"
+}
+
 # Verify a command passes through without being blocked (exit != 2).
 run_test() {
   local label="$1" cmd="$2"
-  printf '{"tool_input":{"command":"%s"}}' "$cmd" | bash "$HOOK" >/dev/null 2>&1
+  printf '{"tool_input":{"command":"%s"}}' "$cmd" | run_hook >/dev/null 2>&1
   if [ $? -ne 2 ]; then
     pass=$((pass+1)); echo "  ok: $label"
   else
@@ -22,7 +80,7 @@ run_test() {
 # Same as run_test but uses jq for proper JSON encoding (handles quotes, newlines).
 _test_json() {
   local label="$1" cmd="$2"
-  jq -n --arg c "$cmd" '{"tool_input":{"command":$c}}' | bash "$HOOK" >/dev/null 2>&1
+  jq -n --arg c "$cmd" '{"tool_input":{"command":$c}}' | run_hook >/dev/null 2>&1
   if [ $? -ne 2 ]; then
     pass=$((pass+1)); echo "  ok: $label"
   else
@@ -33,7 +91,7 @@ _test_json() {
 # Verify a command emits (or doesn't emit) a permissionDecision allow.
 _test_allow() {
   local label="$1" cmd="$2" expect_allow="$3"
-  result=$(jq -n --arg c "$cmd" '{"tool_input":{"command":$c}}' | bash "$HOOK" 2>/dev/null)
+  result=$(jq -n --arg c "$cmd" '{"tool_input":{"command":$c}}' | run_hook 2>/dev/null)
   if [ "$expect_allow" = true ]; then
     if echo "$result" | grep -q '"permissionDecision"'; then
       pass=$((pass+1)); echo "  ok: $label"
@@ -52,7 +110,7 @@ _test_allow() {
 # Verify a command gets denied with a reason (permissionDecision: deny).
 _test_deny() {
   local label="$1" cmd="$2"
-  result=$(jq -n --arg c "$cmd" '{"tool_input":{"command":$c}}' | bash "$HOOK" 2>/dev/null)
+  result=$(jq -n --arg c "$cmd" '{"tool_input":{"command":$c}}' | run_hook 2>/dev/null)
   if echo "$result" | grep -q '"permissionDecision": "deny"'; then
     pass=$((pass+1)); echo "  ok: $label"
   else
@@ -63,11 +121,40 @@ _test_deny() {
 # Verify a command gets rewritten (updatedInput emitted).
 _test_rewrite() {
   local label="$1" cmd="$2"
-  result=$(jq -n --arg c "$cmd" '{"tool_input":{"command":$c}}' | bash "$HOOK" 2>/dev/null)
+  result=$(jq -n --arg c "$cmd" '{"tool_input":{"command":$c}}' | run_hook 2>/dev/null)
   if echo "$result" | grep -q '"updatedInput"'; then
     pass=$((pass+1)); echo "  ok: $label"
   else
     echo "  FAIL: $label (expected rewrite, got none)"; fail=$((fail+1))
+  fi
+}
+
+# Verify a command's allow/no-decision behavior under a *specific* fixture
+# permissions.allow/deny settings.json, written into its own throwaway HOME
+# (never the operator's real $HOME). Pins the settings-driven behavior
+# (checks 15 / deny-defers-to-CC) deliberately, instead of leaving it to
+# whatever real settings happen to be on the machine running the suite.
+_test_allow_with_settings() {
+  local label="$1" cmd="$2" expect_allow="$3" settings_json="$4"
+  local fixture_home
+  fixture_home="$(mktemp -d)"
+  mkdir -p "$fixture_home/.claude"
+  printf '%s' "$settings_json" > "$fixture_home/.claude/settings.json"
+  local result
+  result=$(jq -n --arg c "$cmd" '{"tool_input":{"command":$c}}' \
+    | HOME="$fixture_home" CLAUDE_PROJECT_DIR= bash "$HOOK" 2>/dev/null)
+  if [ "$expect_allow" = true ]; then
+    if echo "$result" | grep -q '"permissionDecision"'; then
+      pass=$((pass+1)); echo "  ok: $label"
+    else
+      echo "  FAIL: $label (expected allow decision, got none)"; echo "        $result"; fail=$((fail+1))
+    fi
+  else
+    if echo "$result" | grep -q '"permissionDecision"'; then
+      echo "  FAIL: $label (unexpected allow decision)"; fail=$((fail+1))
+    else
+      pass=$((pass+1)); echo "  ok: $label"
+    fi
   fi
 }
 
@@ -247,6 +334,19 @@ _test_allow "unknown cmd not allowlisted" "some-unknown-command --flag" false
 _test_allow "compound cmd both allowlisted" "npm install && curl http://example.com" true
 _test_allow "piped cmd not allowlisted" "git log | rm -rf /" false
 _test_allow "semicolon cmd not allowlisted" "echo hello; rm -rf /" false
+
+echo ""
+echo "--- Settings-driven allow/deny fixtures (pins checks 15 + deny-defers) ---"
+_test_allow_with_settings \
+  'explicit deny rule defers (no allow) even for an otherwise-safe rm -rf' \
+  'rm -rf /tmp/build && mkdir /tmp/build' \
+  false \
+  '{"permissions":{"deny":["Bash(rm -rf *)"]}}'
+_test_allow_with_settings \
+  'explicit allow rule approves an otherwise-unknown command' \
+  'some-fixture-only-command --flag' \
+  true \
+  '{"permissions":{"allow":["Bash(some-fixture-only-command *)"]}}'
 
 echo ""
 echo "--- ANSI-C string auto-approve (check 16) ---"
