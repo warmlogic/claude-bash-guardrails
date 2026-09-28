@@ -1,21 +1,30 @@
 # bash-guardrails — Contributor Guide
 
-A PreToolUse hook plugin for Claude Code's Bash tool. See `README.md` for what it does and how
-to install it; this file is for contributors.
+A trap-only PreToolUse hook for Claude Code's Bash tool. See `README.md` for what it catches and
+why; this file is for contributors.
 
 ## Structure
 
 ```text
 .claude-plugin/plugin.json   # Canonical manifest (name, description, author) — no version field
 hooks/hooks.json             # PreToolUse hook registration
-scripts/bash-guardrails.sh   # The hook itself — all checks live here
-skills/canary-audit/         # Skill wrapping the canary audit workflow
-tests/
-  test-bash-guardrails.sh    # Unit tests for the hook's checks
-  test-canary.sh             # Canary audit driver (see below)
-  canary-commands.json       # Sentinel commands the canary audit runs
-  canary-baselines/          # One JSON result file per Claude Code version audited
+scripts/bash-guardrails.sh   # The hook: one awk scan over the command, deny or silence
+tests/test-bash-guardrails.sh
 ```
+
+## The contract
+
+The hook has exactly two outcomes: a PreToolUse `deny` with a one-line reason that says what to
+write instead, or exit 0 with no output. Keep it that way:
+
+- **Never emit `allow`.** Permission rules and auto mode own approval.
+- **Never emit `updatedInput`.** A rewrite is what Claude Code runs, and a bad one fails silently.
+  The version before this one corrupted heredocs and multi-line arguments exactly that way.
+- **Never read settings files.** The hook's answer depends on the command text and `$SHELL` only.
+- **Add a trap only with evidence and near-zero false positives.** A trap is a command the shell
+  is certain to reject. If the answer depends on the filesystem (a bare `*.md` that may match) or
+  on quoting the scanner can't see (text nested inside another quoted command), leave it out.
+  Fail open: an unparseable command (an unterminated quote, say) passes through.
 
 ## Running tests
 
@@ -23,8 +32,10 @@ tests/
 bash tests/test-bash-guardrails.sh
 ```
 
-This is the unit-test suite for the hook's checks (compound commands, pipelines, heredoc
-traps, ANSI-C quoting, etc.). It must pass before opening a PR.
+It must pass before opening a PR. Every new trap needs a deny case and the near-misses that must
+stay silent. Mark a case "proven" only when the command is harmless to run: the suite then
+executes it under `zsh -f` in an empty directory to confirm zsh really rejects it (deny) or runs
+it cleanly (silent). The final assertion checks that no case produced `allow` or `updatedInput`.
 
 ## Testing locally with a plugin dir
 
@@ -60,25 +71,3 @@ catalog entry **must** keep its own `description` (a GitHub-sourced entry shows 
 `.claude-plugin/plugin.json`'s `description` — `plugin.json` is the source of truth; update the
 catalog entry to match whenever you change it. Don't duplicate the description a third place
 (e.g. a README table) — link to the plugin instead.
-
-## Canary audits
-
-`tests/test-canary.sh` detects whether Claude Code's native permission system has changed in
-ways that affect this plugin's value — i.e., whether a check the hook auto-approves is now
-handled natively by CC, making the check removable.
-
-- **Before starting work** on an auto-approve check: consider running the full audit
-  (`test-canary.sh --yes`) first. This reveals whether CC already handles the pattern natively,
-  which may change the approach (no fix needed, or the fix belongs upstream in CC rather than in
-  the hook).
-- **After adding or modifying an auto-approve check:** add corresponding sentinel commands to
-  `tests/canary-commands.json` so future audits can detect when CC catches up, then baseline them
-  with a full audit.
-- **Quick check (no API cost):** `bash tests/test-canary.sh --diff` compares the current CC
-  version to the latest baseline and flags version drift without spending API credits.
-- **Full audit (~$0.02):** `bash tests/test-canary.sh --yes` runs every sentinel through a fresh
-  `claude -p --bare` session (no hooks, no plugins, no allow rules) and saves a new baseline under
-  `tests/canary-baselines/<version>.json`.
-
-See `skills/canary-audit/SKILL.md` for the full workflow (pre-release checklist, result
-interpretation, adding sentinels).

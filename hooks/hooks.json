@@ -1,5 +1,5 @@
 {
-  "description": "PreToolUse hook for Bash commands — validates safety, blocks dangerous patterns, auto-approves known-safe operations",
+  "description": "PreToolUse hook for Bash commands: denies zsh traps with a one-line fix; never allows or rewrites",
   "hooks": {
     "PreToolUse": [
       {
