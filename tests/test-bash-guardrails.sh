@@ -334,6 +334,30 @@ _test_allow "env-prefixed rm -rf / in compound blocked" "FOO=1 rm -rf / && echo 
 _test_allow "env-prefixed unknown cmd in compound blocked" "FOO=1 some-unknown-command && echo hi" false
 _test_allow "env-prefixed unknown cmd in pipeline blocked" "FOO=1 some-unknown-command | head" false
 _test_allow "env-prefixed safe cmd in compound approved" "A=1 B=2 make && echo ok" true
+_test_allow "pipe stage after && is vetted (xargs rm)" "cd x && find . -name a | xargs rm -rf" false
+_test_allow "pipe stage after && is vetted (rm -rf /)" "true && echo y | rm -rf /" false
+_test_allow "pipe stage after && is vetted (git reset --hard)" "ls && git status | git reset --hard" false
+_test_allow "backgrounded cmd after && is vetted" "cd x && npm run dev & git reset --hard" false
+_test_allow "backgrounded cmd after a pipeline is vetted" "cat x | grep y & rm -rf ~" false
+_test_allow "env cmd after && is vetted" "cd x && env FOO=1 rm -rf /" false
+_test_allow "sed -Ei in compound blocked" "cd x && sed -Ei s/a/b/ f" false
+_test_allow "sed --in-place in compound blocked" "cd x && sed --in-place s/a/b/ f" false
+_test_allow "cmd sub in a safe cmd's args is vetted" "cd x && echo \$(rm -rf ~)" false
+_test_allow "pipeline inside a cmd sub is vetted" "cd x && echo \$(ls | rm -rf ~)" false
+_test_allow "redirections are not separators" "cd x && make 2>&1 | tail -5" true
+_test_allow "arithmetic expansion is not a cmd sub" "cd x && echo \$((1+2))" true
+_test_allow "env with a safe cmd approved" "cd x && env FOO=1 make" true
+_test_allow "pipe inside a cmd sub in a loop approved" 'for f in *.md; do n=$(head -1 "$f" | sed "s/^# //"); echo "$n"; done' true
+_test_allow "multi-line: every line safe approved" "$(printf 'cd /tmp\necho ok\ngrep -c x f')" true
+_test_allow "multi-line: an unsafe line blocks" "$(printf 'cd /tmp\nrm -rf /')" false
+_test_allow "heredoc body lines are data, not commands" "$(printf 'cat > /tmp/n.md <<EOF\ndon'"'"'t rm -rf /\nEOF')" true
+_test_allow "cmd after a heredoc is vetted" "$(printf 'cat > /tmp/n.md <<EOF\nbody\nEOF\nrm -rf ~')" false
+_test_allow_with_settings "one allowlisted line doesn't carry a second line" "$(printf 'git status\nrm -rf ~')" false \
+  '{"permissions":{"allow":["Bash(npm test*)","Bash(git status*)"]}}'
+_test_allow_with_settings "allowlisted cmd doesn't carry a backgrounded one" "npm test & git reset --hard" false \
+  '{"permissions":{"allow":["Bash(npm test*)","Bash(git status*)"]}}'
+_test_allow_with_settings "allowlisted cmd with 2>&1 still approved" "npm test 2>&1" true \
+  '{"permissions":{"allow":["Bash(npm test*)","Bash(git status*)"]}}'
 
 echo ""
 echo "--- Settings-driven allow/deny fixtures (pins checks 15 + deny-defers) ---"

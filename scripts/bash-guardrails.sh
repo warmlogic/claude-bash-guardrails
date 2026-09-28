@@ -194,13 +194,14 @@ if [ "$cmd_trimmed" != "$cmd" ]; then
   needs_rewrite=true
 fi
 
-#@check 13  allow   Compound commands (&&, ||, ;) and shell loops/conditionals → allow if all sub-commands are safe
+#@check 13  allow   Compound commands (&&, ||, ;, |, &, newlines) and shell loops/conditionals → allow if every sub-command is safe
 # --- 13. Auto-approve safe compound commands ---
 # CC blocks compound operators to prevent chaining attacks, but common
 # patterns like "cd <path> && git commit" are safe.
 # Also handles shell control flow (for/while/until/if/case) — extracts
 # inner commands and command substitutions, verifies each is safe.
-# Splits on compound operators, verifies every sub-command is known-safe.
+# Splits on every top-level separator (split_on_compound: &&, ||, ;, |, &,
+# newline; heredoc bodies dropped first), verifies every sub-command is safe.
 
 # Check if a command is approved for compounding — hardcoded safe list, then
 # deny/allow rules. Used for inner command checks (command substitutions in
@@ -224,10 +225,30 @@ is_cmd_approved() {
 # must not override it. Declining here never denies — the hook just emits no
 # allow, and Claude Code's own permission check decides. Used at every level
 # (compound sub-commands, nested conditions/substitutions, pipeline stages)
-# so the hook is never more permissive than its hardcoded carveouts.
+# so no sub-command of a multi-part command gets past a hardcoded carveout.
+# A lone command matching a rule is check 15's job: there the rule names the
+# whole command, so the hook allows only what the user's rule already covers.
+# Limits: the carveouts read quote-stripped text, so a path hidden in quotes
+# (`rm -rf "$HOME"`, `rm -rf $'/'`) or a nested $(...) isn't seen — they
+# catch commands a model plausibly emits, not deliberate obfuscation.
 allow_rule_fallback() {
   is_first_token_hardcoded "$1" && return 1
   [ ${#allow_rules[@]} -gt 0 ] && matches_rule "$1" "${allow_rules[@]}"
+}
+
+# Approve every unquoted $(...) and `...` in a command (non-nested; arithmetic
+# $((...)) is not a substitution and is dropped first).
+vet_substitutions() {
+  local s inner piece
+  s=$(echo "$1" | sed -E 's/\$\(\([^)]*\)\)//g')
+  while IFS= read -r inner; do
+    [ -z "$inner" ] && continue
+    # A substitution can itself be a pipeline or compound — vet every piece
+    while IFS= read -r piece; do
+      is_cmd_approved "$piece" || return 1
+    done < <(split_on_compound "$inner")
+  done < <(echo "$s" | grep -oE '\$\([^)]+\)|`[^`]+`' | sed -E -e 's/^\$\(//' -e 's/\)$//' -e 's/^`//' -e 's/`$//')
+  return 0
 }
 
 # Is a command safe for compounding?
@@ -238,6 +259,9 @@ is_safe_for_compound() {
   local first
   first=$(echo "$c" | awk '{print $1}')
   [ -z "$first" ] && return 1
+  # Unquoted command substitutions run wherever they appear (a for list, an
+  # assignment value, an echo argument) — each must itself be approved.
+  vet_substitutions "$c" || return 1
   case "$first" in
     cd|echo|printf|true|:|test|\[|pwd|whoami|which|type|read) return 0 ;;
     # Shell control-flow keywords
@@ -249,25 +273,7 @@ is_safe_for_compound() {
       [ -z "$rest" ] && return 0
       is_cmd_approved "$rest"
       return $? ;;
-    for|select)
-      # for VAR in EXPR — check command substitutions in EXPR
-      local expr
-      expr=$(echo "$c" | sed -n 's/^[a-z]*[[:space:]]*[^[:space:]]*[[:space:]]*in[[:space:]]*//p')
-      if echo "$expr" | grep -q '\$('; then
-        local inner
-        while IFS= read -r inner; do
-          [ -z "$inner" ] && continue
-          is_cmd_approved "$inner" || return 1
-        done < <(echo "$expr" | grep -oE '\$\([^)]+\)' | sed -e 's/^\$(//' -e 's/)$//')
-      fi
-      if echo "$expr" | grep -q '`'; then
-        local inner_bt
-        while IFS= read -r inner_bt; do
-          [ -z "$inner_bt" ] && continue
-          is_cmd_approved "$inner_bt" || return 1
-        done < <(echo "$expr" | grep -oE '`[^`]+`' | sed -e 's/^`//' -e 's/`$//')
-      fi
-      return 0 ;;
+    for|select) return 0 ;;  # for VAR in EXPR — EXPR's substitutions vetted above
     while|until|if)
       # Check the condition command
       local cond
@@ -292,8 +298,16 @@ is_safe_for_compound() {
     sort|uniq|tr|cut|diff|comm|join|paste|column|fold|rev|tac|nl|seq|bc) return 0 ;;
     jq|yq) return 0 ;;
     awk) return 0 ;;
-    sed) echo "$c" | grep -Eq '(^|[[:space:]])-i' && return 1; return 0 ;;
-    date|uname|hostname|id|groups|env|printenv|locale) return 0 ;;
+    # In-place edit in any spelling: -i, -i.bak, clustered -Ei / -ni, --in-place
+    sed) echo "$c" | grep -Eq '(^|[[:space:]])(-[a-zA-Z]*i|--in-place)' && return 1; return 0 ;;
+    env)
+      # `env [-flags] [VAR=val ...] cmd` runs cmd — strip the prefix, vet cmd
+      local rest
+      rest=$(echo "$c" | sed -E -e 's/^env[[:space:]]*//' -e 's/^((-[^[:space:]]*|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)[[:space:]]*)*//')
+      [ -z "$rest" ] && return 0
+      is_cmd_approved "$rest"
+      return $? ;;
+    date|uname|hostname|id|groups|printenv|locale) return 0 ;;
     md5sum|sha256sum|sha512sum|shasum|b2sum) return 0 ;;
     nproc|getconf) return 0 ;;
     xxd|od|hexdump|strings) return 0 ;;
@@ -336,30 +350,13 @@ is_safe_for_compound() {
       esac
       return 1 ;;
     *)
-      # Variable assignments: VAR=value or VAR=$(cmd)
+      # Variable assignments: VAR=value or VAR=$(cmd) — substitutions in the
+      # value were vetted above. An env-prefixed command (`FOO=1 cmd ...`)
+      # runs cmd: once the substitutions are dropped, whatever follows the
+      # first word of the value must itself be approved.
       if echo "$first" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*='; then
-        local val
-        val=$(echo "$c" | sed 's/^[A-Za-z_][A-Za-z0-9_]*=//')
-        # Check command substitutions within the value
-        if echo "$val" | grep -q '\$('; then
-          local inner
-          while IFS= read -r inner; do
-            [ -z "$inner" ] && continue
-            is_cmd_approved "$inner" || return 1
-          done < <(echo "$val" | grep -oE '\$\([^)]+\)' | sed -e 's/^\$(//' -e 's/)$//')
-        fi
-        if echo "$val" | grep -q '`'; then
-          local inner_bt
-          while IFS= read -r inner_bt; do
-            [ -z "$inner_bt" ] && continue
-            is_cmd_approved "$inner_bt" || return 1
-          done < <(echo "$val" | grep -oE '`[^`]+`' | sed -e 's/^`//' -e 's/`$//')
-        fi
-        # An env-prefixed command (`FOO=1 cmd ...`) runs cmd: once the
-        # substitutions are dropped, whatever follows the first word of the
-        # value must itself be approved.
         local rest
-        rest=$(echo "$val" | sed -E -e 's/\$\([^)]*\)//g' -e 's/`[^`]*`//g' -e 's/^[^[:space:]]*[[:space:]]*//')
+        rest=$(echo "$c" | sed -E -e 's/^[A-Za-z_][A-Za-z0-9_]*=//' -e 's/\$\([^)]*\)//g' -e 's/`[^`]*`//g' -e 's/^[^[:space:]]*[[:space:]]*//')
         [ -z "$rest" ] && return 0
         is_cmd_approved "$rest"
         return $?
@@ -405,22 +402,63 @@ is_first_token_hardcoded() {
   esac
 }
 
-# Split a quote-stripped command on compound operators (&&, ||, ;)
-# into one sub-command per line.
+# Split a quote-stripped command into one sub-command per line. Separators, at
+# the top level only: &&, ||, ;, newline, pipes (|, |&), and background (&) —
+# every piece runs, so every piece must be vetted. Text inside $(...) and
+# backticks stays with its piece (vet_substitutions handles it); redirections
+# (2>&1, &>f, >&2) are not separators; backslash-escaped characters (\;) are
+# arguments, and a backslash-newline continuation joins its lines.
 split_on_compound() {
-  echo "$1" | sed -E \
-    -e 's/[[:space:]]*\|\|[[:space:]]*/\n/g' \
-    -e 's/[[:space:]]*&&[[:space:]]*/\n/g' \
-    -e 's/[[:space:]]*;[[:space:]]*/\n/g' | sed '/^[[:space:]]*$/d'
+  printf '%s' "$1" | awk 'BEGIN { RS = "\0" }
+    function emit() { gsub(/^[ \t]+|[ \t]+$/, "", out); if (out != "") print out; out = "" }
+    {
+      out = ""; depth = 0; bt = 0; n = length($0)
+      for (i = 1; i <= n; i++) {
+        c = substr($0, i, 1); nx = substr($0, i + 1, 1)
+        if (bt) { out = out c; if (c == "`") bt = 0; continue }
+        if (c == "`") { bt = 1; out = out c; continue }
+        if (c == "$" && nx == "(") { depth++; out = out "$("; i++; continue }
+        if (depth > 0) {
+          if (c == "(") depth++; else if (c == ")") depth--
+          out = out c; continue
+        }
+        if (c == "\\") { if (nx == "\n") out = out " "; else out = out c nx; i++; continue }
+        if (c == "\n" || c == ";") { emit(); continue }
+        if (c == "|") { if (nx == "|" || nx == "&") i++; emit(); continue }
+        if (c == "&") {
+          if (nx == "&") { i++; emit(); continue }
+          last = substr(out, length(out), 1)
+          if (last == ">" || last == "<" || nx == ">") { out = out c; continue }
+          emit(); continue
+        }
+        out = out c
+      }
+      emit()
+    }'
 }
 
-cmd_no_quotes=$(strip_quoted_mls "$cmd")
+# Drop heredoc bodies (the lines after `<<DELIM` up to the DELIM line): they
+# are data, not commands, and an apostrophe in one would unbalance the quote
+# stripping. `<<<` here-strings are left alone.
+strip_heredocs() {
+  printf '%s' "$1" | awk '
+    delim != "" { t = $0; gsub(/^[ \t]+|[ \t]+$/, "", t); if (t == delim) delim = ""; next }
+    {
+      print
+      if (match($0, /<<-?[ \t]*["\047]?[A-Za-z_][A-Za-z0-9_]*/) && substr($0, RSTART - 1, 1) != "<") {
+        d = substr($0, RSTART, RLENGTH); sub(/^<<-?[ \t]*["\047]?/, "", d); delim = d
+      }
+    }'
+}
+
+cmd_no_quotes=$(strip_quoted_mls "$(strip_heredocs "$cmd")")
 
 # Strip escaped operators (\;, \|, etc.) before checking for compound operators —
 # these are arguments (e.g., find -exec {} \;), not shell syntax.
 cmd_no_escapes_compound=$(echo "$cmd_no_quotes" | sed 's/\\[;|&<>()]//g')
 
-if echo "$cmd_no_escapes_compound" | grep -Eq '&&|\|\||;'; then
+# More than one piece (compound, pipeline, background, or multi-line) → vet each
+if [ "$(split_on_compound "$cmd_no_escapes_compound" | wc -l)" -gt 1 ]; then
   compound_safe=true
   compound_denied=false
   while IFS= read -r subcmd; do
@@ -460,8 +498,10 @@ fi
 
 #@check 14  allow   Safe pipelines / find -exec → allow (stages are known-safe or allowlisted)
 # --- 14. Auto-approve safe pipelines ---
-# Handles commands that check 15 skips due to shell operators (|, \;, \(, etc).
-# Splits on pipe; every stage must pass: deny → hardcoded safe → allow rule.
+# Check 13 already vets any multi-piece command, pipelines included; what
+# reaches here with an allow still possible is a single piece carrying an
+# escaped operator (find -exec ... \;), which check 15's guard skips.
+# Every stage must pass: deny → hardcoded safe → allow rule.
 # Allow-rule fallback only fires when the first token is NOT in the hardcoded
 # list — ensures safety carveouts (find -delete, sed -i, find -exec rm) are
 # never overridden by a broad user rule like `Bash(find *)`. Unknown commands
@@ -539,7 +579,7 @@ if echo "$cmd_no_quotes" | grep -Eq '[|\\]'; then
         all_safe=false
         break
       fi
-    done < <(echo "$cmd_no_escapes" | tr '|' '\n')
+    done < <(split_on_compound "$cmd_no_escapes")
     [ "$pipeline_denied" = true ] && all_safe=false
     if [ "$all_safe" = true ]; then
       emit_allow "Safe pipeline: all stages are known-safe"
@@ -553,12 +593,14 @@ fi
 # Most commands (python, pytest, npm, etc.) need an allow rule or user approval.
 # This check provides a redundant safety net for when CC's own pattern matching
 # misses due to special characters — if CC's matching works, this is a no-op.
-# Guard: skip if command contains shell operators outside quotes — glob-to-regex
-# would be too permissive for compound/piped commands. Compound operators are
-# handled by check 13 above.
+# Guard: skip unless the command is a single piece outside quotes (after
+# backslash-newline continuations collapse) — a `*` in a rule would otherwise
+# match across &&, ;, |, &, or a newline and approve a second command the rule
+# never named. Compound commands are handled by checks 13/14 above.
 allowlisted=false
-if echo "$cmd_no_quotes" | grep -Eq '&&|\|\||[|;]'; then
-  : # Skip allowlist matching — glob-to-regex is too permissive for compound/piped commands
+if echo "$cmd_no_quotes" | grep -Eq '&&|\|\||[|;]' \
+   || [ "$(split_on_compound "$cmd_no_quotes" | wc -l)" -gt 1 ]; then
+  : # Skip allowlist matching — more than one command
 elif [ ${#allow_rules[@]} -gt 0 ] && matches_rule "$cmd" "${allow_rules[@]}"; then
   allowlisted=true
 fi
@@ -618,7 +660,7 @@ if [ "$allowlisted" = false ] && printf '%s' "$cmd" | grep -qE "\\\$'"; then
     fi
     [ "$tok_ok" = true ] || { ansi_safe=false; break; }
     ansi_safe=true
-  done < <(split_on_compound "$cmd_ansi" | tr '|' '\n')
+  done < <(split_on_compound "$cmd_ansi")
   if [ "$ansi_safe" = true ]; then
     emit_allow "ANSI-C quoted string (\$'...') with safe outer cmd — overrides CC's ansi_c_string feature prompt"
   fi

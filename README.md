@@ -12,6 +12,8 @@ Claude Code's built-in safe command list is narrow — mostly git read operation
 - **ANSI-C quoted strings** (`$'...'`) with safe outer commands — CC's tree-sitter flags `ansi_c_string` as a feature needing review, prompting even when the outer command is allowlisted. Auto-approved when every command in it (each side of `&&`, `;`, `|`) is hardcoded-safe (`git`, `gh`, `bd`, etc.) or matches your allow rules
 - **Allowlisted commands** — redundant safety net for when CC's own pattern matching misses due to special characters
 
+In a multi-part command (`&&`, `;`, `|`, `&`, or several lines), every part must pass on its own, and a broad allow rule never overrides the hook's built-in carve-outs: `Bash(rm *)` doesn't unlock `rm -rf / && …`, and `Bash(find *)` or `Bash(sed *)` doesn't unlock `find -exec rm` or `sed -i` inside a compound. When a part fails, the hook stays silent and Claude Code's own permission check decides, so you may see a prompt there rather than an auto-approval.
+
 ## What it does
 
 Run `bash scripts/bash-guardrails.sh --help` for the current check list:
@@ -24,7 +26,7 @@ Checks:
    4  deny    Interpreter heredoc (python3/node/ruby/perl <<EOF) → deny (CC strips indentation; suggests temp file)
    1  strip   Comment-only lines → strip (prevents CC's #-after-newline heuristic)
    3  strip   Leading/trailing whitespace → trim (fixes allowlist matching)
-  13  allow   Compound commands (&&, ||, ;) and shell loops/conditionals → allow if all sub-commands are safe
+  13  allow   Compound commands (&&, ||, ;, |, &, newlines) and shell loops/conditionals → allow if every sub-command is safe
   14  allow   Safe pipelines / find -exec → allow (stages are known-safe or allowlisted)
   15  allow   Commands matching permissions.allow → allow (checks settings.json + settings.local.json)
   16  allow   ANSI-C quoted strings ($'...') with safe outer cmd → allow (overrides CC's ansi_c_string feature prompt)
