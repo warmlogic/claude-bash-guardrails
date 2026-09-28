@@ -1,7 +1,6 @@
 {
   "name": "bash-guardrails",
   "description": "Auto-approve hook for Claude Code's Bash tool — reduces unnecessary permission prompts for safe pipelines, find -exec, ANSI-C quoted strings, shell loops/conditionals, and allowlisted commands",
-  "version": "0.10.3",
   "author": {
     "name": "Matt Mollison",
     "email": "matt.mollison@gmail.com"

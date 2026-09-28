@@ -1,3 +1,8 @@
+---
+name: canary-audit
+description: Run the bash-guardrails canary audit to detect whether Claude Code's native permission system now handles patterns that the hook currently auto-approves. Use this when the user mentions "bash-guardrails canary", "canary audit for bash-guardrails", "test if bash-guardrails checks are still needed", or "pre-release validation for bash-guardrails".
+---
+
 # bash-guardrails Canary Audit
 
 Run the bash-guardrails canary audit to detect whether Claude Code's native permission system now handles patterns that the hook currently auto-approves. Use this when the user mentions "bash-guardrails canary", "canary audit for bash-guardrails", "test if bash-guardrails checks are still needed", or "pre-release validation for bash-guardrails".

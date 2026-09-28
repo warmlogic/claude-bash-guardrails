@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/bash-guardrails.sh"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/bash-guardrails.sh\""
           }
         ]
       }
