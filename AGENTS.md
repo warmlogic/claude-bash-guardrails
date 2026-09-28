@@ -46,7 +46,9 @@ claude plugin validate .
 This plugin carries no `version` field — not in `.claude-plugin/plugin.json`, and none in the
 marketplace catalog entry either. Claude Code resolves an unversioned install by the git commit
 SHA of the source (an install lands in `~/.claude/plugins/cache/<marketplace>/<plugin>/<sha12>/`),
-so every merge to `main` is a release with nothing to bump. `claude plugin validate .` warns "No
+so every merge to `main` is a release with nothing to bump. Installed users pick it up with
+`claude plugin update bash-guardrails@<marketplace>`, or through background auto-update, which
+is off by default for third-party marketplaces. `claude plugin validate .` warns "No
 version specified" for this reason — that one warning is expected and accepted; every other
 warning must be fixed before merging.
 
