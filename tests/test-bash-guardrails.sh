@@ -21,14 +21,10 @@ fail=0
 # npm, curl, wget, cat, echo, find, ...) — mirroring what a real Claude
 # Code user's permissions.allow typically looks like, per this plugin's
 # own README ("if you have a broad permissions.allow list ... this plugin
-# adds minimal value"). `rm` is deliberately absent: an unscoped `Bash(rm
-# *)` rule would flip the negative rm-safety-carveout tests below (`rm -rf
-# /`, `rm -rf ~`, bare `rm -rf`, etc.) from blocked to allowed, since check
-# 13's compound loop falls back to the user's allow rules with no
-# hardcoded-command guard. `Bash(find *)` is safe to include: the
-# find/-delete and find/-exec negative tests below only exercise the
-# unpiped, unescaped-\; codepath (check 14), which does guard its
-# allow-rule fallback behind "first token isn't hardcoded".
+# adds minimal value"). Broad rules like `Bash(find *)` can't weaken the
+# carveout tests: the allow-rule fallback never fires for a hardcoded first
+# token (see allow_rule_fallback in the hook, and the "Broad allow rules"
+# fixture section below, which pins this with `Bash(rm *)` et al.).
 TEST_HOME="$(mktemp -d)"
 mkdir -p "$TEST_HOME/.claude"
 cat > "$TEST_HOME/.claude/settings.json" <<'BASELINE_SETTINGS'
@@ -244,7 +240,7 @@ _test_allow 'chmod && python3' 'chmod +x script.sh && python3 script.sh' true
 _test_allow 'cd && curl (allowlisted)' 'cd /tmp && curl http://example.com' true
 _test_allow 'echo && unknown cmd' 'echo hello && some-unknown-command' false
 _test_allow 'cd && wget (allowlisted)' 'cd /tmp && wget http://example.com' true
-_test_allow 'find -exec rm (allowlisted)' 'cd /tmp && find . -exec rm {} \;' true
+_test_allow 'find -exec rm blocked in compound despite Bash(find *)' 'cd /tmp && find . -exec rm {} \;' false
 _test_allow 'touch && echo' 'touch /tmp/marker && echo done' true
 _test_allow 'cp && echo' 'cp /tmp/a.txt /tmp/b.txt && echo copied' true
 _test_allow 'mv && echo' 'mv /tmp/old.txt /tmp/new.txt && echo moved' true
@@ -334,6 +330,10 @@ _test_allow "unknown cmd not allowlisted" "some-unknown-command --flag" false
 _test_allow "compound cmd both allowlisted" "npm install && curl http://example.com" true
 _test_allow "piped cmd not allowlisted" "git log | rm -rf /" false
 _test_allow "semicolon cmd not allowlisted" "echo hello; rm -rf /" false
+_test_allow "env-prefixed rm -rf / in compound blocked" "FOO=1 rm -rf / && echo hi" false
+_test_allow "env-prefixed unknown cmd in compound blocked" "FOO=1 some-unknown-command && echo hi" false
+_test_allow "env-prefixed unknown cmd in pipeline blocked" "FOO=1 some-unknown-command | head" false
+_test_allow "env-prefixed safe cmd in compound approved" "A=1 B=2 make && echo ok" true
 
 echo ""
 echo "--- Settings-driven allow/deny fixtures (pins checks 15 + deny-defers) ---"
@@ -347,6 +347,44 @@ _test_allow_with_settings \
   'some-fixture-only-command --flag' \
   true \
   '{"permissions":{"allow":["Bash(some-fixture-only-command *)"]}}'
+_test_allow_with_settings \
+  'allowlisted unknown command in a compound is approved' \
+  'cd /tmp && some-fixture-only-command --flag' \
+  true \
+  '{"permissions":{"allow":["Bash(some-fixture-only-command *)"]}}'
+
+echo ""
+echo "--- Broad allow rules never override hardcoded carveouts (checks 13/14) ---"
+_test_allow_with_settings \
+  'Bash(rm *) does not unlock rm -rf / in a compound' \
+  'rm -rf / && echo oops' \
+  false \
+  '{"permissions":{"allow":["Bash(rm *)"]}}'
+_test_allow_with_settings \
+  'Bash(rm *) does not unlock rm -rf ~ in a then-branch' \
+  'if [ -f x ]; then rm -rf ~; fi' \
+  false \
+  '{"permissions":{"allow":["Bash(rm *)"]}}'
+_test_allow_with_settings \
+  'Bash(rm *) does not unlock rm -rf .git in a while condition' \
+  'while rm -rf .git; do echo x; done' \
+  false \
+  '{"permissions":{"allow":["Bash(rm *)"]}}'
+_test_allow_with_settings \
+  'Bash(find *) does not unlock find -exec rm in a compound' \
+  'cd /tmp && find . -exec rm {} \;' \
+  false \
+  '{"permissions":{"allow":["Bash(find *)"]}}'
+_test_allow_with_settings \
+  'Bash(sed *) does not unlock sed -i in a compound' \
+  'cd /tmp && sed -i s/a/b/ f.txt' \
+  false \
+  '{"permissions":{"allow":["Bash(sed *)"]}}'
+_test_allow_with_settings \
+  'Bash(find *) does not unlock find -delete in a pipeline' \
+  'find /tmp -delete | head' \
+  false \
+  '{"permissions":{"allow":["Bash(find *)"]}}'
 
 echo ""
 echo "--- ANSI-C string auto-approve (check 16) ---"
@@ -360,6 +398,13 @@ _test_allow "multi-line backslash-continuation bd with \$'...' is approved" "bd 
 --description \$'multi\\nline'" true
 _test_allow "unknown outer cmd with \$'...' not approved" "evil \$'arg'" false
 _test_allow "rm with \$'...' not approved" "rm \$'/tmp/foo'" false
+_test_allow "safe \$'...' piece doesn't carry rm -rf / after &&" "echo \$'x' && rm -rf /" false
+_test_allow "safe \$'...' piece doesn't carry an unknown cmd after &&" "echo \$'x' && some-unknown-command" false
+_test_allow "safe \$'...' piece doesn't carry a pipe to sh" "echo \$'x' | sh" false
+_test_allow "unapproved cmd sub in assignment blocks \$'...' approval" "X=\$(some-unknown-command) && echo \$'x'" false
+_test_allow_with_settings "git carveout holds with \$'...' (git reset --hard, no allow rules)" "git reset --hard \$'x'" false '{}'
+_test_allow "every \$'...' piece safe is approved" "echo \$'x'; git commit -m \$'y'" true
+_test_allow "\$'...' piped to jq is approved" "echo \$'a' | jq ." true
 
 echo ""
 echo "========================="

@@ -213,8 +213,21 @@ is_cmd_approved() {
     return 1
   fi
   is_safe_for_compound "$cmd" && return 0
-  [ ${#allow_rules[@]} -gt 0 ] && matches_rule "$cmd" "${allow_rules[@]}" && return 0
+  allow_rule_fallback "$cmd" && return 0
   return 1
+}
+
+# Allow-rule fallback for a command is_safe_for_compound rejected. Fires only
+# when the first token is NOT hardcoded: for a hardcoded token, the rejection
+# is a safety carveout (rm on /, ~, .., .git; find -delete; find -exec rm;
+# sed -i; git clean) and a broad user rule like `Bash(rm *)` or `Bash(find *)`
+# must not override it. Declining here never denies — the hook just emits no
+# allow, and Claude Code's own permission check decides. Used at every level
+# (compound sub-commands, nested conditions/substitutions, pipeline stages)
+# so the hook is never more permissive than its hardcoded carveouts.
+allow_rule_fallback() {
+  is_first_token_hardcoded "$1" && return 1
+  [ ${#allow_rules[@]} -gt 0 ] && matches_rule "$1" "${allow_rules[@]}"
 }
 
 # Is a command safe for compounding?
@@ -342,7 +355,14 @@ is_safe_for_compound() {
             is_cmd_approved "$inner_bt" || return 1
           done < <(echo "$val" | grep -oE '`[^`]+`' | sed -e 's/^`//' -e 's/`$//')
         fi
-        return 0
+        # An env-prefixed command (`FOO=1 cmd ...`) runs cmd: once the
+        # substitutions are dropped, whatever follows the first word of the
+        # value must itself be approved.
+        local rest
+        rest=$(echo "$val" | sed -E -e 's/\$\([^)]*\)//g' -e 's/`[^`]*`//g' -e 's/^[^[:space:]]*[[:space:]]*//')
+        [ -z "$rest" ] && return 0
+        is_cmd_approved "$rest"
+        return $?
       fi
       # Allow --version / version checks
       echo "$c" | grep -Eq '(^|[[:space:]])--version([[:space:]]|$)' && return 0
@@ -420,10 +440,11 @@ if echo "$cmd_no_escapes_compound" | grep -Eq '&&|\|\||;'; then
       compound_denied=true
       break
     fi
-    # Check hardcoded safe list first, then fall back to allow rules
+    # Check hardcoded safe list first, then fall back to allow rules (guarded:
+    # never overrides a hardcoded carveout — see allow_rule_fallback)
     if ! is_safe_for_compound "$subcmd"; then
-      if [ ${#allow_rules[@]} -gt 0 ] && matches_rule "$subcmd_for_rules" "${allow_rules[@]}"; then
-        continue  # Allowed by user's permissions
+      if allow_rule_fallback "$subcmd_for_rules"; then
+        continue  # Unknown command, user has explicit allow rule
       fi
       compound_safe=false
       break
@@ -510,14 +531,9 @@ if echo "$cmd_no_quotes" | grep -Eq '[|\\]'; then
         pipeline_denied=true
         break
       fi
-      # Check hardcoded safe list first. On `return 1`, fall back to allow
-      # rules ONLY when the first token isn't hardcoded — otherwise is_safe's
-      # verdict reflects a safety carveout (find -delete, sed -i, find -exec rm)
-      # that the user's allowlist must not silently override.
+      # Check hardcoded safe list first, then the guarded allow-rule fallback
       if ! is_safe_for_compound "$segment"; then
-        if ! is_first_token_hardcoded "$segment" \
-           && [ ${#allow_rules[@]} -gt 0 ] \
-           && matches_rule "$segment" "${allow_rules[@]}"; then
+        if allow_rule_fallback "$segment"; then
           continue  # Unknown command, user has explicit allow rule
         fi
         all_safe=false
@@ -556,35 +572,53 @@ fi
 # Gate: first non-assignment token must be hardcoded-safe or match an allow rule.
 # Rejects cases where check 13/14/15 haven't already approved the cmd.
 if [ "$allowlisted" = false ] && printf '%s' "$cmd" | grep -qE "\\\$'"; then
-  # Split on compound ops, find the first non-assignment/non-keyword token of any
-  # piece; if that token is hardcoded-safe or allowlisted, approve the whole cmd.
+  # Split on compound ops and pipes; EVERY piece must pass, and at least one
+  # must carry a command token. A piece passes when it isn't denied, its first
+  # non-assignment/non-keyword token is in the list below or allowlisted, and
+  # a hardcoded token's carveouts (is_safe_for_compound) still hold. rm, cp,
+  # mv etc. are deliberately absent from the list: $'...' arguments are opaque
+  # to the carveouts once quotes are stripped.
   ansi_safe=false
-  # Strip backslash-newline continuations so multi-line cmds collapse to one line
-  cmd_ansi=$(printf '%s' "$cmd_no_quotes" | awk 'BEGIN{RS="\0"}{gsub(/\\\n/," "); print}')
+  # Strip backslash-newline continuations so multi-line cmds collapse to one
+  # line, then escaped operators (find -exec {} \;), which are arguments
+  cmd_ansi=$(printf '%s' "$cmd_no_quotes" | awk 'BEGIN{RS="\0"}{gsub(/\\\n/," "); print}' | sed 's/\\[;|&<>()]//g')
   while IFS= read -r piece; do
     piece=$(echo "$piece" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
     [ -z "$piece" ] && continue
+    if [ ${#deny_rules[@]} -gt 0 ] && matches_rule "$piece" "${deny_rules[@]}"; then
+      ansi_safe=false; break
+    fi
     tok=$(echo "$piece" | awk '{
       for (i = 1; i <= NF; i++) {
         t = $i
         if (t ~ /^[A-Za-z_][A-Za-z0-9_]*=/) continue
         if (t == "do" || t == "then" || t == "else" || t == "elif" || \
-            t == "while" || t == "until" || t == "if" || t == "for") continue
+            t == "while" || t == "until" || t == "if" || t == "for" || \
+            t == "done" || t == "fi" || t == "esac") continue
         print t; exit
       }
     }')
-    [ -z "$tok" ] && continue
+    if [ -z "$tok" ]; then
+      # Assignments / closing keywords only — still vet any substitutions
+      is_safe_for_compound "$piece" || { ansi_safe=false; break; }
+      continue
+    fi
+    tok_ok=false
     case "$tok" in
       echo|printf|cat|head|tail|grep|egrep|fgrep|rg|ag|awk|sed|jq|yq|tr|cut|sort|uniq|wc|find|git|gh|bd|npm|npx|yarn|pnpm|pip|pip3|python|python3|node|ruby|make|cargo|go|pytest|jest|vitest|mocha)
-        ansi_safe=true; break ;;
+        tok_ok=true ;;
+      *)
+        if ! is_first_token_hardcoded "$tok" && [ ${#allow_rules[@]} -gt 0 ] \
+           && { matches_rule "$tok" "${allow_rules[@]}" || matches_rule "$tok arg" "${allow_rules[@]}"; }; then
+          tok_ok=true
+        fi ;;
     esac
-    if [ ${#allow_rules[@]} -gt 0 ] && matches_rule "$tok" "${allow_rules[@]}"; then
-      ansi_safe=true; break
+    if [ "$tok_ok" = true ] && is_first_token_hardcoded "$tok"; then
+      is_safe_for_compound "$piece" || tok_ok=false
     fi
-    if [ ${#allow_rules[@]} -gt 0 ] && matches_rule "$tok arg" "${allow_rules[@]}"; then
-      ansi_safe=true; break
-    fi
-  done < <(split_on_compound "$cmd_ansi")
+    [ "$tok_ok" = true ] || { ansi_safe=false; break; }
+    ansi_safe=true
+  done < <(split_on_compound "$cmd_ansi" | tr '|' '\n')
   if [ "$ansi_safe" = true ]; then
     emit_allow "ANSI-C quoted string (\$'...') with safe outer cmd — overrides CC's ansi_c_string feature prompt"
   fi
